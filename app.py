@@ -110,7 +110,30 @@ TRANS_LANGS    = ["영어", "일본어", "중국어", "스페인어", "프랑스
 # ════════════════════════════════════════
 #  유틸리티
 # ════════════════════════════════════════
+@st.cache_resource
+def _get_supabase():
+    """Supabase 클라이언트 반환 (설정 안 됐으면 None)"""
+    url = os.getenv("SUPABASE_URL", "")
+    key = os.getenv("SUPABASE_ANON_KEY", "")
+    if not url or not key:
+        return None
+    try:
+        from supabase import create_client
+        return create_client(url, key)
+    except Exception:
+        return None
+
+
 def _load(path):
+    sb = _get_supabase()
+    if sb:
+        try:
+            r = sb.table("app_data").select("value").eq("key", path.stem).execute()
+            if r.data:
+                return r.data[0]["value"]
+            return []
+        except Exception:
+            pass
     if not path.exists():
         return []
     with open(path, "r", encoding="utf-8") as f:
@@ -118,11 +141,27 @@ def _load(path):
 
 
 def _save(path, items):
+    sb = _get_supabase()
+    if sb:
+        try:
+            sb.table("app_data").upsert({"key": path.stem, "value": items}).execute()
+            return
+        except Exception:
+            pass
     with open(path, "w", encoding="utf-8") as f:
         json.dump(items, f, ensure_ascii=False, indent=2)
 
 
 def load_settings() -> dict:
+    sb = _get_supabase()
+    if sb:
+        try:
+            r = sb.table("app_data").select("value").eq("key", "settings").execute()
+            if r.data:
+                return r.data[0]["value"]
+            return {"dark_mode": False}
+        except Exception:
+            pass
     if not SETTINGS_FILE.exists():
         return {"dark_mode": False}
     with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -130,12 +169,28 @@ def load_settings() -> dict:
 
 
 def save_settings(settings: dict):
+    sb = _get_supabase()
+    if sb:
+        try:
+            sb.table("app_data").upsert({"key": "settings", "value": settings}).execute()
+            return
+        except Exception:
+            pass
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(settings, f, ensure_ascii=False, indent=2)
 
 
 # ─── 채팅 기록 ───
 def load_chat_history() -> list:
+    sb = _get_supabase()
+    if sb:
+        try:
+            r = sb.table("app_data").select("value").eq("key", "chat_history").execute()
+            if r.data:
+                return r.data[0]["value"]
+            return []
+        except Exception:
+            pass
     if not CHAT_FILE.exists():
         return []
     with open(CHAT_FILE, "r", encoding="utf-8") as f:
@@ -145,11 +200,25 @@ def load_chat_history() -> list:
 def save_chat_history(messages: list):
     # 최대 CHAT_MAX_MESSAGES 개만 보관
     trimmed = messages[-CHAT_MAX_MESSAGES:]
+    sb = _get_supabase()
+    if sb:
+        try:
+            sb.table("app_data").upsert({"key": "chat_history", "value": trimmed}).execute()
+            return
+        except Exception:
+            pass
     with open(CHAT_FILE, "w", encoding="utf-8") as f:
         json.dump(trimmed, f, ensure_ascii=False, indent=2)
 
 
 def clear_chat_history():
+    sb = _get_supabase()
+    if sb:
+        try:
+            sb.table("app_data").delete().eq("key", "chat_history").execute()
+            return
+        except Exception:
+            pass
     if CHAT_FILE.exists():
         CHAT_FILE.unlink()
 
