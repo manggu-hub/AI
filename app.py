@@ -1584,6 +1584,135 @@ def generate_ai_analysis() -> str:
 
 
 # ════════════════════════════════════════
+#  교차 분석 인사이트
+# ════════════════════════════════════════
+def get_daily_data(days: int = 30) -> list:
+    """최근 N일 데이터를 날짜별로 통합"""
+    today = date.today()
+    sleep_map  = {s["date"]: s for s in load_sleep()}
+    mood_map   = {m["date"]: m for m in load_mood()}
+    workout_map, expense_map = {}, {}
+    for w in load_workouts():
+        workout_map.setdefault(w["date"], []).append(w)
+    for l in load_ledger():
+        if l["type"] == "expense":
+            expense_map[l["date"]] = expense_map.get(l["date"], 0) + l["amount"]
+    result = []
+    for i in range(days):
+        d = (today - timedelta(days=i)).isoformat()
+        result.append({
+            "date": d,
+            "sleep_hours":   sleep_map.get(d, {}).get("duration"),
+            "sleep_quality": sleep_map.get(d, {}).get("quality"),
+            "mood_score":    mood_map.get(d, {}).get("score"),
+            "workout_min":   sum(w["duration"] for w in workout_map.get(d, [])),
+            "expense":       expense_map.get(d, 0),
+        })
+    return result
+
+
+def calculate_cross_insights(daily: list) -> list:
+    """교차 분석 인사이트 리스트 반환"""
+    insights = []
+
+    # 1. 수면 → 기분
+    good_s = [d["mood_score"] for d in daily if d["sleep_hours"] and d["sleep_hours"] >= 7 and d["mood_score"]]
+    bad_s  = [d["mood_score"] for d in daily if d["sleep_hours"] and d["sleep_hours"] < 6  and d["mood_score"]]
+    if good_s and bad_s:
+        ga, ba = sum(good_s)/len(good_s), sum(bad_s)/len(bad_s)
+        if abs(ga - ba) >= 0.4:
+            diff = ga - ba
+            insights.append({
+                "icon": "🌙", "title": "수면 → 기분 상관관계",
+                "body": f"7시간↑ 수면 시 기분 평균 **{ga:.1f}/5**\n6시간↓ 수면 시 기분 평균 **{ba:.1f}/5**",
+                "tip":  f"충분한 수면이 기분을 {abs(diff):.1f}점 높여줘요!" if diff > 0 else f"수면 부족이 기분을 {abs(diff):.1f}점 낮춰요.",
+                "good": diff > 0,
+            })
+
+    # 2. 기분 → 지출
+    good_m = [d["expense"] for d in daily if d["mood_score"] and d["mood_score"] >= 4 and d["expense"] > 0]
+    bad_m  = [d["expense"] for d in daily if d["mood_score"] and d["mood_score"] <= 2 and d["expense"] > 0]
+    if good_m and bad_m:
+        ga, ba = sum(good_m)/len(good_m), sum(bad_m)/len(bad_m)
+        if ba > ga * 1.15:
+            insights.append({
+                "icon": "💸", "title": "감정적 소비 패턴",
+                "body": f"기분 좋은 날 평균 지출 **{ga:,.0f}원**\n기분 나쁜 날 평균 지출 **{ba:,.0f}원**",
+                "tip":  "기분이 안 좋을 때 지출이 늘어요. 충동구매 주의!",
+                "good": False,
+            })
+
+    # 3. 운동 → 기분
+    w_m  = [d["mood_score"] for d in daily if d["workout_min"] > 0 and d["mood_score"]]
+    nw_m = [d["mood_score"] for d in daily if d["workout_min"] == 0 and d["mood_score"]]
+    if w_m and nw_m:
+        wa, nwa = sum(w_m)/len(w_m), sum(nw_m)/len(nw_m)
+        if abs(wa - nwa) >= 0.3:
+            diff = wa - nwa
+            insights.append({
+                "icon": "🏃", "title": "운동 → 기분 상관관계",
+                "body": f"운동한 날 기분 평균 **{wa:.1f}/5**\n운동 안 한 날 기분 평균 **{nwa:.1f}/5**",
+                "tip":  f"운동하면 기분이 {abs(diff):.1f}점 올라가요! 꾸준히 해봐요." if diff > 0 else "운동이 기분에 별 영향 없는 편이에요.",
+                "good": diff > 0,
+            })
+
+    # 4. 수면 → 지출
+    good_sl = [d["expense"] for d in daily if d["sleep_hours"] and d["sleep_hours"] >= 7 and d["expense"] > 0]
+    bad_sl  = [d["expense"] for d in daily if d["sleep_hours"] and d["sleep_hours"] < 6  and d["expense"] > 0]
+    if good_sl and bad_sl:
+        ga, ba = sum(good_sl)/len(good_sl), sum(bad_sl)/len(bad_sl)
+        if ba > ga * 1.2:
+            insights.append({
+                "icon": "😴", "title": "수면 부족 → 지출 증가",
+                "body": f"잘 잔 날 평균 지출 **{ga:,.0f}원**\n못 잔 날 평균 지출 **{ba:,.0f}원**",
+                "tip":  "수면 부족이 지출을 늘려요. 푹 자면 돈도 아껴요!",
+                "good": False,
+            })
+
+    # 5. 요일별 지출 패턴
+    wd_exp = {i: [] for i in range(7)}
+    for d in daily:
+        if d["expense"] > 0:
+            wd_exp[date.fromisoformat(d["date"]).weekday()].append(d["expense"])
+    wd_avg = {i: sum(v)/len(v) for i, v in wd_exp.items() if v}
+    if len(wd_avg) >= 3:
+        day_names = ["월","화","수","목","금","토","일"]
+        max_d = max(wd_avg, key=wd_avg.get)
+        min_d = min(wd_avg, key=wd_avg.get)
+        insights.append({
+            "icon": "📅", "title": "요일별 소비 패턴",
+            "body": f"가장 많이 쓰는 날: **{day_names[max_d]}요일** ({wd_avg[max_d]:,.0f}원)\n가장 적게 쓰는 날: **{day_names[min_d]}요일** ({wd_avg[min_d]:,.0f}원)",
+            "tip":  f"{day_names[max_d]}요일에 소비가 집중돼요. 미리 예산을 정해두면 좋아요!",
+            "good": None,
+        })
+
+    return insights
+
+
+def generate_cross_narrative(insights: list) -> str:
+    """교차 분석 결과를 AI가 종합해서 한 문단으로 설명"""
+    if not insights:
+        return "데이터가 더 쌓이면 인사이트를 분석해드릴게요! (최소 7일 이상 기록 필요)"
+    summary = "\n".join(f"- {ins['icon']} {ins['title']}: {ins['body'].replace('**','')}\n  팁: {ins['tip']}" for ins in insights)
+    prompt = (
+        "다음은 사용자의 생활 패턴 교차 분석 결과야.\n\n"
+        f"{summary}\n\n"
+        "이 데이터를 바탕으로 따뜻하고 친근한 말투로 3~4문장 한국어 종합 코멘트를 써줘. "
+        "구체적인 수치를 활용해서 실용적인 조언도 포함해줘."
+    )
+    cfg = types.GenerateContentConfig(system_instruction="친근한 개인 AI 비서. 항상 한국어로 답해.")
+    try:
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+            config=cfg,
+        )
+        return resp.text or ""
+    except Exception:
+        return ""
+
+
+# ════════════════════════════════════════
 #  알림
 # ════════════════════════════════════════
 def upcoming_for_reminder(within_minutes: int):
@@ -3960,17 +4089,17 @@ elif page == "📈 차트":
 # ════════════════════════════════════════
 elif page == "🤖 AI분석":
     st.title("🤖 AI 패턴 분석")
-    st.caption("AI가 나의 습관·운동·기분·지출을 분석해서 조언해줘요.")
+    st.caption("AI가 나의 생활 데이터를 연결해서 다른 앱은 절대 못 해주는 인사이트를 알려줘요.")
     st.write("")
 
     today = date.today()
     monday = today - timedelta(days=today.weekday())
 
-    # 미리보기 요약
+    # 상단 요약 카드
     col1, col2, col3 = st.columns(3)
     habits = load_habits()
     week_dates = [(monday + timedelta(days=i)).isoformat() for i in range(7)]
-    habit_done = sum(1 for h in habits for d in week_dates if d in h.get("check_dates", []))
+    habit_done  = sum(1 for h in habits for d in week_dates if d in h.get("check_dates", []))
     habit_total = len(habits) * 7
     with col1:
         st.markdown(
@@ -3994,23 +4123,78 @@ elif page == "🤖 AI분석":
         )
 
     st.write("")
-    if st.button("🤖 AI 분석 시작하기", type="primary", use_container_width=True):
-        with st.spinner("AI가 데이터를 분석 중이에요... 잠깐만요 🤔"):
-            try:
-                result = generate_ai_analysis()
-                st.session_state.ai_analysis = result
-            except Exception as e:
-                st.error(f"분석 중 오류: {e}")
+    tab_basic, tab_cross = st.tabs(["📊 기본 AI 분석", "🔗 교차 분석 인사이트"])
 
-    if "ai_analysis" in st.session_state and st.session_state.ai_analysis:
+    with tab_basic:
         st.write("")
-        st.markdown(
-            f'<div class="ai-analysis">{st.session_state.ai_analysis.replace(chr(10), "<br>")}</div>',
-            unsafe_allow_html=True,
-        )
-        if st.button("🔄 다시 분석"):
-            del st.session_state.ai_analysis
-            st.rerun()
+        if st.button("🤖 AI 분석 시작하기", type="primary", use_container_width=True):
+            with st.spinner("AI가 데이터를 분석 중이에요... 잠깐만요 🤔"):
+                try:
+                    result = generate_ai_analysis()
+                    st.session_state.ai_analysis = result
+                except Exception as e:
+                    st.error(f"분석 중 오류: {e}")
+        if "ai_analysis" in st.session_state and st.session_state.ai_analysis:
+            st.write("")
+            st.markdown(
+                f'<div class="ai-analysis">{st.session_state.ai_analysis.replace(chr(10), "<br>")}</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("🔄 다시 분석"):
+                del st.session_state.ai_analysis
+                st.rerun()
+
+    with tab_cross:
+        st.write("")
+        st.markdown("#### 🔗 교차 분석 인사이트")
+        st.caption("수면·기분·운동·지출 데이터를 서로 연결해서 패턴을 찾아요. 데이터가 많을수록 정확해져요!")
+        st.write("")
+
+        days_opt = st.select_slider("분석 기간", options=[7, 14, 30, 60, 90], value=30)
+
+        if st.button("🔍 교차 분석 실행", type="primary", use_container_width=True):
+            with st.spinner("데이터를 교차 분석 중이에요..."):
+                daily = get_daily_data(days_opt)
+                insights = calculate_cross_insights(daily)
+                st.session_state.cross_insights = insights
+                st.session_state.cross_narrative = generate_cross_narrative(insights)
+
+        if "cross_insights" in st.session_state:
+            insights = st.session_state.cross_insights
+            if not insights:
+                st.info("💡 아직 데이터가 부족해요. 수면·기분·운동·가계부를 더 기록해보세요!")
+            else:
+                # 인사이트 카드
+                for ins in insights:
+                    border_color = "#4CAF50" if ins["good"] else ("#F44336" if ins["good"] is False else "#2196F3")
+                    body_html = ins['body'].replace('\n', '<br>').replace('**', '<strong>', 1)
+                    body_html = body_html.replace('**', '</strong>', 1) if '<strong>' in body_html else body_html
+                    import re as _re
+                    body_html = _re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', ins['body'].replace('\n', '<br>'))
+                    st.markdown(
+                        f"""<div style="border-left:4px solid {border_color};background:#f8f9fa;
+                        padding:14px 18px;border-radius:8px;margin-bottom:14px;">
+                        <div style="font-size:1.05rem;font-weight:700;margin-bottom:6px;">
+                        {ins['icon']} {ins['title']}</div>
+                        <div style="font-size:0.92rem;color:#444;margin-bottom:8px;">{body_html}</div>
+                        <div style="font-size:0.88rem;color:{border_color};font-weight:600;">💡 {ins['tip']}</div>
+                        </div>""",
+                        unsafe_allow_html=True,
+                    )
+
+                # AI 종합 코멘트
+                if st.session_state.get("cross_narrative"):
+                    st.write("")
+                    st.markdown("#### 🤖 AI 종합 코멘트")
+                    st.markdown(
+                        f'<div class="ai-analysis">{st.session_state.cross_narrative.replace(chr(10), "<br>")}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            if st.button("🔄 다시 분석", key="cross_refresh"):
+                del st.session_state.cross_insights
+                del st.session_state.cross_narrative
+                st.rerun()
 
 
 # ════════════════════════════════════════
