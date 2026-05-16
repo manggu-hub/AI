@@ -1108,7 +1108,131 @@ def tool_complete_todo(title_keyword: str) -> str:
     return f"할 일 {len(matched)}개 완료 처리: {', '.join(t['title'] for t in matched)}"
 
 
-GEMINI_TOOLS = [tool_add_schedule, tool_add_memo, tool_add_todo, tool_complete_todo]
+def tool_log_workout(workout_type: str, duration_min: int, note: str = "") -> str:
+    """운동을 기록합니다. '오늘 달리기 30분 했어', '헬스 1시간 했어' 같을 때 호출.
+
+    Args:
+        workout_type: 운동 종류. '달리기','걷기','헬스','수영','자전거','요가','필라테스','등산','기타' 중 하나.
+        duration_min: 운동 시간 (분). 예: 30, 60.
+        note: 추가 메모 (선택).
+    """
+    add_workout(workout_type, duration_min, note)
+    return f"운동 '{workout_type}' {duration_min}분이 기록되었습니다."
+
+
+def tool_log_sleep(hours: float, quality: int = 3, note: str = "") -> str:
+    """수면을 기록합니다. '어젯밤 7시간 잤어', '오늘 수면 별로였어' 같을 때 호출.
+
+    Args:
+        hours: 수면 시간 (시간). 예: 7.5.
+        quality: 수면 질 1~5 (1:최악, 3:보통, 5:최고). 기본값 3.
+        note: 추가 메모 (선택).
+    """
+    today = date.today().isoformat()
+    now_dt = datetime.now()
+    wakeup_dt = now_dt
+    bedtime_dt = wakeup_dt - timedelta(hours=hours)
+    items = load_sleep()
+    items = [s for s in items if s.get("date") != today]
+    items.append({
+        "id": str(uuid.uuid4()),
+        "date": today,
+        "bedtime": bedtime_dt.strftime("%H:%M"),
+        "wakeup": wakeup_dt.strftime("%H:%M"),
+        "duration": round(hours, 1),
+        "quality": max(1, min(5, quality)),
+        "note": note,
+    })
+    items.sort(key=lambda x: x["date"], reverse=True)
+    save_sleep(items)
+    return f"수면 {hours}시간 (수면질 {quality}/5)이 기록되었습니다."
+
+
+def tool_log_mood(score: int, note: str = "") -> str:
+    """오늘의 기분을 기록합니다. '오늘 기분 좋아', '기분 최고야', '기분 별로야' 같을 때 호출.
+
+    Args:
+        score: 기분 점수 1~5 (1:별로, 2:조금별로, 3:보통, 4:좋음, 5:최고).
+        note: 일기/메모 (선택).
+    """
+    score = max(1, min(5, score))
+    add_mood(score, note)
+    return f"오늘 기분 {MOOD_EMOJIS[score-1]} ({MOOD_LABELS[score-1]})이 기록되었습니다."
+
+
+def tool_add_expense(amount: int, category: str = "기타", note: str = "") -> str:
+    """지출을 가계부에 기록합니다. '점심 8000원 썼어', '교통비 1500원' 같을 때 호출.
+
+    Args:
+        amount: 금액 (원). 예: 8000.
+        category: 카테고리. '식비','교통','쇼핑','의료','문화','교육','기타' 중 하나.
+        note: 내용 (선택).
+    """
+    add_ledger("expense", category, amount, note)
+    return f"지출 {amount:,}원 ({category})이 기록되었습니다."
+
+
+def tool_add_income(amount: int, category: str = "기타", note: str = "") -> str:
+    """수입을 가계부에 기록합니다. '월급 받았어', '용돈 10만원 받았어' 같을 때 호출.
+
+    Args:
+        amount: 금액 (원). 예: 100000.
+        category: 카테고리. '급여','용돈','부수입','기타' 중 하나.
+        note: 내용 (선택).
+    """
+    add_ledger("income", category, amount, note)
+    return f"수입 {amount:,}원 ({category})이 기록되었습니다."
+
+
+def tool_check_habit(habit_name_keyword: str) -> str:
+    """오늘의 습관을 완료 체크합니다. '물 마시기 했어', '운동 습관 완료' 같을 때 호출.
+
+    Args:
+        habit_name_keyword: 습관 이름에 포함된 단어 (부분 일치).
+    """
+    items = load_habits()
+    today = date.today().isoformat()
+    matched = [h for h in items if habit_name_keyword in h["name"]]
+    if not matched:
+        return f"'{habit_name_keyword}'을(를) 포함하는 습관이 없습니다."
+    results = []
+    for h in matched:
+        already = today in h.get("check_dates", [])
+        toggle_habit(h["id"], today)
+        results.append(f"'{h['name']}' {'체크 취소' if already else '완료 체크'}")
+    return ", ".join(results) + "되었습니다."
+
+
+def tool_get_today_summary() -> str:
+    """오늘의 전체 현황 요약을 반환합니다. '오늘 뭐 했어?', '오늘 현황 알려줘' 같을 때 호출."""
+    today = date.today().isoformat()
+    schedules = [s for s in load_schedules() if s["datetime"][:10] == today]
+    sch_text = "\n".join(f"  - {s['datetime'][11:16]} {s['title']}" for s in schedules) or "  없음"
+    todos_undone = [t for t in load_todos() if not t["completed"]]
+    todo_text = "\n".join(f"  - {t['title']}" for t in todos_undone[:5]) or "  없음"
+    workouts = [w for w in load_workouts() if w["date"] == today]
+    workout_text = "\n".join(f"  - {w['type']} {w['duration']}분" for w in workouts) or "  없음"
+    moods = [m for m in load_mood() if m["date"] == today]
+    mood_text = f"{moods[0]['emoji']} {MOOD_LABELS[moods[0]['score']-1]}" if moods else "  미기록"
+    expenses = [l for l in load_ledger() if l["date"] == today and l["type"] == "expense"]
+    expense_text = f"  {sum(l['amount'] for l in expenses):,}원" if expenses else "  없음"
+    habits = load_habits()
+    checked = sum(1 for h in habits if today in h.get("check_dates", []))
+    habit_text = f"  {checked}/{len(habits)}개 완료" if habits else "  없음"
+    return (f"📅 오늘 일정:\n{sch_text}\n"
+            f"✅ 미완료 할 일:\n{todo_text}\n"
+            f"🏃 오늘 운동:\n{workout_text}\n"
+            f"😊 오늘 기분: {mood_text}\n"
+            f"💰 오늘 지출:{expense_text}\n"
+            f"🔁 습관:{habit_text}")
+
+
+GEMINI_TOOLS = [
+    tool_add_schedule, tool_add_memo, tool_add_todo, tool_complete_todo,
+    tool_log_workout, tool_log_sleep, tool_log_mood,
+    tool_add_expense, tool_add_income,
+    tool_check_habit, tool_get_today_summary,
+]
 
 
 # ════════════════════════════════════════
@@ -2282,15 +2406,23 @@ elif page == "💬 채팅":
             st.session_state.upload_key += 1
 
         system_instruction = (
-            f"너는 사용자의 개인 비서야. "
-            f"오늘은 {now.strftime('%Y년 %m월 %d일 %A')}, 지금 시각은 {now.strftime('%H:%M')}이야.\n\n"
-            f"[현재 일정]\n{schedules_as_text()}\n\n"
-            f"[현재 할 일]\n{todos_as_text()}\n\n"
-            f"[현재 메모]\n{memos_as_text()}\n\n"
-            "사용자가 새 일정/메모/할 일 추가나 할 일 완료를 말하면 도구를 호출해서 저장해. "
-            "반복 일정은 recurrence 인자를 적절히 설정해. "
-            "이미지가 첨부됐으면 내용을 분석하고, 사용자가 원하면 일정/메모로 저장해. "
-            "단순 질문이면 도구 없이 한국어로 답해."
+            f"너는 사용자의 스마트 개인 AI 비서야. 말로 모든 걸 처리해줘.\n"
+            f"오늘은 {now.strftime('%Y년 %m월 %d일 (%A)')}, 지금 시각은 {now.strftime('%H:%M')}이야.\n\n"
+            f"[오늘 일정]\n{schedules_as_text()}\n\n"
+            f"[할 일]\n{todos_as_text()}\n\n"
+            f"[메모]\n{memos_as_text()}\n\n"
+            "## 도구 사용 기준\n"
+            "- '내일 3시 치과' → tool_add_schedule\n"
+            "- '우유 사야해' → tool_add_todo\n"
+            "- '달리기 30분 했어' → tool_log_workout\n"
+            "- '어젯밤 6시간 잤어' → tool_log_sleep\n"
+            "- '오늘 기분 좋아' → tool_log_mood (5:최고, 4:좋음, 3:보통, 2:조금별로, 1:별로)\n"
+            "- '점심 8000원 썼어' → tool_add_expense\n"
+            "- '용돈 5만원 받았어' → tool_add_income\n"
+            "- '물 마시기 했어' → tool_check_habit\n"
+            "- '오늘 현황 알려줘' → tool_get_today_summary\n"
+            "- 이미지 첨부 시 내용 분석 후 저장 여부 물어봐\n"
+            "도구 호출 후 결과를 친근하게 확인해줘. 단순 질문은 도구 없이 한국어로 답해."
         )
 
         # Gemini에는 최근 CHAT_CONTEXT_LIMIT개만 전달 (토큰 절약)
