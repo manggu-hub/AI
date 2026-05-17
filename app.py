@@ -776,12 +776,33 @@ def habit_week_status(h) -> list:
 def load_goals(): return _load(GOALS_FILE)
 def save_goals(items): _save(GOALS_FILE, items)
 
-def add_goal(title: str, description: str, deadline: str, target: int = 100):
+GOAL_TYPE_OPTIONS = {
+    "manual":        "✏️ 직접 입력",
+    "workout_count": "🏃 이번달 운동 횟수 자동추적",
+    "expense_limit": "💰 이번달 지출 한도 자동추적",
+}
+
+
+def add_goal(title: str, description: str, deadline: str, target: int = 100, goal_type: str = "manual"):
     items = load_goals()
     items.append({"id": str(uuid.uuid4()), "title": title, "description": description,
                   "deadline": deadline, "progress": 0, "target": target,
+                  "goal_type": goal_type,
                   "created_at": date.today().isoformat(), "completed": False})
     save_goals(items)
+
+
+def compute_auto_goal_progress(goal: dict) -> int:
+    """자동 추적 목표의 현재 진행값을 데이터에서 계산"""
+    gtype = goal.get("goal_type", "manual")
+    today = date.today()
+    prefix = f"{today.year:04d}-{today.month:02d}"
+    if gtype == "workout_count":
+        return sum(1 for w in load_workouts() if w["date"].startswith(prefix))
+    if gtype == "expense_limit":
+        return ledger_monthly_summary(today.year, today.month)["expense"]
+    return goal.get("progress", 0)
+
 
 def update_goal_progress(goal_id: str, progress: int):
     items = load_goals()
@@ -1713,6 +1734,33 @@ def generate_cross_narrative(insights: list) -> str:
 
 
 # ════════════════════════════════════════
+#  영수증 자동 분석
+# ════════════════════════════════════════
+def analyze_receipt(image_bytes: bytes, mime_type: str) -> dict:
+    """영수증/결제 내역 사진을 Gemini Vision으로 분석해서 지출 항목 반환"""
+    today_str = date.today().isoformat()
+    prompt = (
+        "이 영수증(또는 결제 내역 사진)을 분석해서 다음 JSON 형식으로만 응답하세요:\n"
+        f'{{"store":"가게명","date":"{today_str}","items":['
+        f'{{"name":"항목명","amount":금액정수,"category":"식비/교통/쇼핑/의료/문화/교육/기타 중 하나"}}],"total":총금액정수}}\n'
+        "날짜가 보이면 YYYY-MM-DD 형식으로. 숫자는 원 단위 정수. JSON만 응답, 설명 없이."
+    )
+    img_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+    cfg = types.GenerateContentConfig(system_instruction="영수증 분석 전문가. JSON만 응답.")
+    resp = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt, img_part],
+        config=cfg,
+    )
+    text = resp.text.strip()
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+    return json.loads(text)
+
+
+# ════════════════════════════════════════
 #  알림
 # ════════════════════════════════════════
 def upcoming_for_reminder(within_minutes: int):
@@ -2243,17 +2291,40 @@ def reminder_and_briefing():
     pending = [t for t in load_todos() if not t["completed"]]
 
     lines = []
+    # 일정
     if today_scheds:
-        lines.append(f"오늘 일정 {len(today_scheds)}개: " +
+        lines.append(f"📅 오늘 일정 {len(today_scheds)}개: " +
                      ", ".join(f"{occ.strftime('%H:%M')} {s['title']}" for s, occ in today_scheds[:3]))
     else:
-        lines.append("오늘 일정 없음")
+        lines.append("📅 오늘 일정 없음")
 
+    # 할 일
     if pending:
-        lines.append(f"남은 할 일 {len(pending)}개: " +
-                     ", ".join(t["title"] for t in pending[:3]))
+        lines.append(f"✅ 남은 할 일 {len(pending)}개")
 
-    show_toast("☀️ 아침 브리핑", " / ".join(lines)[:200])
+    # 어제 수면 체크
+    sleep_records = load_sleep()
+    if sleep_records:
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        yesterday_sleep = next((s for s in sleep_records if s["date"] == yesterday), None)
+        if yesterday_sleep:
+            h = yesterday_sleep["duration"]
+            if h < 6:
+                lines.append(f"😴 어제 수면 {h}시간 — 많이 부족해요! 오늘 컨디션 조심")
+            elif h < 7:
+                lines.append(f"😴 어제 수면 {h}시간 — 조금 부족해요")
+
+    # 이번달 지출 경고
+    try:
+        now_inner = datetime.now()
+        m_summary = ledger_monthly_summary(now_inner.year, now_inner.month)
+        if m_summary["expense"] > 0:
+            lines.append(f"💰 이번달 지출 {m_summary['expense']:,}원")
+    except Exception:
+        pass
+
+    show_toast("☀️ 아침 브리핑", " / ".join(lines)[:300])
+    send_telegram("☀️ 아침 브리핑\n" + "\n".join(lines))
     cfg["last_briefing_date"] = today_str
     save_settings(cfg)
 
@@ -2269,6 +2340,56 @@ if page == "🏠 홈":
     weekday_kr = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
     st.title(f"🏠 {now.strftime('%Y년 %m월 %d일')} ({weekday_kr})")
     st.caption(f"지금 {now.strftime('%H:%M')}")
+    st.write("")
+
+    # ── 아침 브리핑 배너 (오전 6~12시 사이, 하루 1번)
+    if 6 <= now.hour < 12:
+        briefing_dismissed_key = f"briefing_dismissed_{date.today().isoformat()}"
+        if not st.session_state.get(briefing_dismissed_key, False):
+            today_scheds_h = get_occurrences_on_date(date.today())
+            pending_h = [t for t in load_todos() if not t["completed"]]
+            sleep_records_h = load_sleep()
+            sleep_warn = ""
+            if sleep_records_h:
+                yesterday_h = (date.today() - timedelta(days=1)).isoformat()
+                ys = next((s for s in sleep_records_h if s["date"] == yesterday_h), None)
+                if ys and ys["duration"] < 7:
+                    icon = "😴" if ys["duration"] < 6 else "🌙"
+                    sleep_warn = f"{icon} 어제 수면 **{ys['duration']}시간** {'— 많이 부족해요!' if ys['duration'] < 6 else '— 조금 부족해요'}"
+            try:
+                m_summary_h = ledger_monthly_summary(now.year, now.month)
+                spend_txt = f"💰 이번달 지출 **{m_summary_h['expense']:,}원**"
+            except Exception:
+                spend_txt = ""
+
+            banner_lines = []
+            if today_scheds_h:
+                sched_preview = ", ".join(f"{occ.strftime('%H:%M')} {s['title']}" for s, occ in today_scheds_h[:3])
+                banner_lines.append(f"📅 오늘 일정 **{len(today_scheds_h)}개** — {sched_preview}")
+            else:
+                banner_lines.append("📅 오늘 예정된 일정 없음")
+            if pending_h:
+                banner_lines.append(f"✅ 남은 할 일 **{len(pending_h)}개**")
+            if sleep_warn:
+                banner_lines.append(sleep_warn)
+            if spend_txt:
+                banner_lines.append(spend_txt)
+
+            with st.container():
+                col_b, col_x = st.columns([11, 1])
+                with col_b:
+                    st.markdown(
+                        '<div style="background:linear-gradient(135deg,#667eea,#764ba2);'
+                        'border-radius:12px;padding:16px 20px;margin-bottom:12px;color:white">'
+                        '<div style="font-size:1.1rem;font-weight:700;margin-bottom:8px">☀️ 좋은 아침이에요!</div>'
+                        + "".join(f'<div style="font-size:0.9rem;margin:4px 0">{l}</div>' for l in banner_lines)
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
+                with col_x:
+                    if st.button("✕", key="dismiss_briefing", help="닫기"):
+                        st.session_state[briefing_dismissed_key] = True
+                        st.rerun()
     st.write("")
 
     # 다음 일정 + 날씨 (2열)
@@ -3218,18 +3339,31 @@ elif page == "🔁 습관":
 # ════════════════════════════════════════
 elif page == "🎯 목표":
     st.title("🎯 목표 관리")
-    st.caption("장기 목표를 설정하고 진행률을 기록하세요.")
+    st.caption("목표를 설정하면 운동·지출은 자동으로 진행률이 계산돼요.")
     st.write("")
 
     with st.expander("➕ 목표 추가", expanded=False):
         with st.form("add_goal_form", clear_on_submit=True):
-            g_title = st.text_input("목표 제목", placeholder="예: 책 12권 읽기")
-            g_desc  = st.text_area("설명 (선택)", height=80)
+            g_title = st.text_input("목표 제목", placeholder="예: 이번달 운동 20회")
+            g_desc  = st.text_area("설명 (선택)", height=60)
+            g_type_label = st.selectbox("목표 종류", list(GOAL_TYPE_OPTIONS.values()))
+            g_type_key = {v: k for k, v in GOAL_TYPE_OPTIONS.items()}[g_type_label]
             g_deadline = st.date_input("목표 기한", value=date.today().replace(month=12, day=31))
-            g_target = st.number_input("목표 단위 (기본 100%)", min_value=1, max_value=10000, value=100)
+
+            if g_type_key == "manual":
+                g_target = st.number_input("목표값 (예: 100%면 100 입력)", min_value=1, max_value=100000, value=100)
+                st.caption("진행률을 직접 입력하는 방식이에요.")
+            elif g_type_key == "workout_count":
+                g_target = st.number_input("목표 운동 횟수 (회/월)", min_value=1, max_value=200, value=20)
+                st.caption("🏃 이번달 운동 기록 횟수를 자동으로 세어서 진행률을 업데이트해요.")
+            elif g_type_key == "expense_limit":
+                g_target = st.number_input("월 지출 한도 (원)", min_value=1000, max_value=10000000, value=500000, step=10000)
+                st.caption("💰 이번달 지출 합계를 자동 추적해요. 목표 = 한도 이하 유지.")
+
             if st.form_submit_button("추가", type="primary"):
                 if g_title.strip():
-                    add_goal(g_title.strip(), g_desc.strip(), g_deadline.isoformat(), int(g_target))
+                    add_goal(g_title.strip(), g_desc.strip(), g_deadline.isoformat(),
+                             int(g_target), goal_type=g_type_key)
                     st.success("목표 추가!")
                     st.rerun()
 
@@ -3239,33 +3373,58 @@ elif page == "🎯 목표":
     done   = [g for g in goals if g.get("completed")]
 
     if not goals:
-        st.info("등록된 목표가 없어요. 위에서 추가해보세요!")
+        st.info("등록된 목표가 없어요. 위에서 추가해보세요!\n\n예: '이번달 운동 20회' → 자동 추적 목표로 추가하면 운동할 때마다 자동으로 올라가요.")
     else:
         if active:
             st.markdown(f"**🎯 진행 중 ({len(active)})**")
             for g in active:
-                pct = int(g["progress"] / g.get("target", 100) * 100)
+                gtype = g.get("goal_type", "manual")
+                # 자동 추적 목표는 실시간 계산
+                actual_progress = compute_auto_goal_progress(g)
+                target = g.get("target", 100)
                 d_left = (date.fromisoformat(g["deadline"]) - date.today()).days
                 d_txt = f"D-{d_left}" if d_left >= 0 else f"D+{-d_left} 초과"
+
+                if gtype == "expense_limit":
+                    # 지출 한도: 초과하면 빨간색
+                    pct = min(int(actual_progress / target * 100), 100)
+                    bar_color = "#dc2626" if actual_progress > target else "#2383e2"
+                    status_txt = f"{actual_progress:,}원 / 한도 {target:,}원 ({pct}%)"
+                    if actual_progress > target:
+                        status_txt += "  ⚠️ 한도 초과!"
+                    auto_badge = '<span style="font-size:0.75rem;background:#fee2e2;color:#dc2626;padding:2px 6px;border-radius:8px;margin-left:6px">💰 자동추적</span>'
+                else:
+                    pct = min(int(actual_progress / target * 100), 100) if target > 0 else 0
+                    bar_color = "#16a34a" if pct >= 100 else "#2383e2"
+                    status_txt = f"{actual_progress} / {target} ({pct}%)"
+                    if gtype == "workout_count":
+                        status_txt = f"{actual_progress}회 / 목표 {target}회 ({pct}%)"
+                        auto_badge = '<span style="font-size:0.75rem;background:#ede9fe;color:#7c3aed;padding:2px 6px;border-radius:8px;margin-left:6px">🏃 자동추적</span>'
+                    else:
+                        auto_badge = ""
+
                 c1, c2 = st.columns([8, 2])
                 with c1:
                     st.markdown(
                         f'<div class="goal-card">'
-                        f'<div style="display:flex;justify-content:space-between">'
-                        f'<b>{g["title"]}</b>'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                        f'<b>{g["title"]}</b>{auto_badge}'
                         f'<span style="font-size:0.82rem;color:#787774">{d_txt} · ~{g["deadline"]}</span></div>'
                         f'{"<div style=\"font-size:0.85rem;color:#787774;margin-top:4px\">" + g["description"] + "</div>" if g.get("description") else ""}'
-                        f'<div class="progress-bar-bg"><div class="progress-bar-fill" style="width:{pct}%"></div></div>'
-                        f'<div style="font-size:0.85rem;color:#2383e2;font-weight:600">{g["progress"]} / {g.get("target",100)} ({pct}%)</div>'
+                        f'<div class="progress-bar-bg"><div class="progress-bar-fill" style="width:{pct}%;background:{bar_color}"></div></div>'
+                        f'<div style="font-size:0.85rem;color:{bar_color};font-weight:600">{status_txt}</div>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
                 with c2:
-                    new_val = st.number_input("진행", min_value=0, max_value=int(g.get("target",100)),
-                                              value=int(g["progress"]), key=f"gp_{g['id']}", label_visibility="collapsed")
-                    if st.button("저장", key=f"gsave_{g['id']}", use_container_width=True):
-                        update_goal_progress(g["id"], new_val)
-                        st.rerun()
+                    if gtype == "manual":
+                        new_val = st.number_input("진행", min_value=0, max_value=int(target),
+                                                  value=int(g["progress"]), key=f"gp_{g['id']}", label_visibility="collapsed")
+                        if st.button("저장", key=f"gsave_{g['id']}", use_container_width=True):
+                            update_goal_progress(g["id"], new_val)
+                            st.rerun()
+                    else:
+                        st.caption("자동추적 중")
                     if st.button("🗑️", key=f"gdel_{g['id']}", use_container_width=True):
                         delete_goal(g["id"])
                         st.rerun()
@@ -3477,7 +3636,61 @@ elif page == "💰 가계부":
     st.write("")
 
     today = date.today()
-    tab1, tab2 = st.tabs(["📋 내역", "➕ 추가"])
+    tab1, tab2, tab_receipt = st.tabs(["📋 내역", "➕ 추가", "📷 영수증 인식"])
+
+    with tab_receipt:
+        st.markdown("#### 📷 영수증 자동 인식")
+        st.caption("영수증 사진을 올리면 AI가 읽어서 자동으로 가계부에 기록해요.")
+        receipt_file = st.file_uploader(
+            "영수증 사진 업로드",
+            type=["jpg", "jpeg", "png", "webp"],
+            label_visibility="collapsed",
+        )
+        if receipt_file:
+            st.image(receipt_file, caption="업로드된 영수증", use_container_width=True)
+            if st.button("🔍 AI로 분석하기", type="primary", use_container_width=True):
+                ext = receipt_file.name.rsplit(".", 1)[-1].lower()
+                mime = IMAGE_MIME.get(ext, "image/jpeg")
+                with st.spinner("AI가 영수증을 읽는 중..."):
+                    try:
+                        receipt_file.seek(0)
+                        result = analyze_receipt(receipt_file.read(), mime)
+                        st.session_state.receipt_result = result
+                    except Exception as e:
+                        st.error(f"분석 실패: {e}")
+
+        if "receipt_result" in st.session_state:
+            r = st.session_state.receipt_result
+            st.write("")
+            st.success(f"✅ **{r.get('store','가게')}** — {r.get('date', today.isoformat())} / 총 {r.get('total',0):,}원")
+            st.markdown("**인식된 항목**")
+            items_r = r.get("items", [])
+            if not items_r:
+                st.caption("항목을 인식하지 못했어요.")
+            else:
+                for it in items_r:
+                    st.markdown(
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'padding:6px 0;border-bottom:1px solid #eee">'
+                        f'<span>{it["name"]} <span style="color:#787774;font-size:0.82rem">({it.get("category","기타")})</span></span>'
+                        f'<b>{it["amount"]:,}원</b></div>',
+                        unsafe_allow_html=True,
+                    )
+                st.write("")
+                add_cols = st.columns(2)
+                with add_cols[0]:
+                    if st.button("💾 전체 항목 가계부에 추가", type="primary", use_container_width=True):
+                        r_date = r.get("date", today.isoformat())
+                        for it in items_r:
+                            add_ledger("expense", it.get("category","기타"),
+                                       int(it["amount"]), it["name"], r_date)
+                        del st.session_state.receipt_result
+                        st.success(f"{len(items_r)}개 항목 추가 완료!")
+                        st.rerun()
+                with add_cols[1]:
+                    if st.button("❌ 취소", use_container_width=True):
+                        del st.session_state.receipt_result
+                        st.rerun()
 
     with tab2:
         with st.form("add_ledger_form", clear_on_submit=True):
