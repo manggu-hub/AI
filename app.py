@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 import uuid
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -51,6 +51,17 @@ WORKOUTS_FILE   = DATA_DIR / "workouts.json"
 
 CHAT_MAX_MESSAGES = 200   # 파일에 보관할 최대 메시지 수
 CHAT_CONTEXT_LIMIT = 30   # Gemini에 전달할 최근 메시지 수
+
+# ── 한국 표준시 (KST = UTC+9)
+KST = timezone(timedelta(hours=9))
+
+def now_kst() -> datetime:
+    """KST 기준 현재 시각 (timezone 없는 naive datetime)"""
+    return datetime.now(KST).replace(tzinfo=None)
+
+def today_kst() -> date:
+    """KST 기준 오늘 날짜"""
+    return datetime.now(KST).date()
 
 # 인천 송도 좌표
 WEATHER_LAT = 37.3836
@@ -489,7 +500,7 @@ def date_separator_label(ts_str: str) -> str:
         d = datetime.fromisoformat(ts_str).date()
     except Exception:
         return ""
-    today = date.today()
+    today = today_kst()
     diff = (today - d).days
     if diff == 0:
         return "오늘"
@@ -600,7 +611,7 @@ def expand_schedule_in_range(s, start: datetime, end: datetime):
 
 def next_occurrence(s, after: datetime = None):
     if after is None:
-        after = datetime.now()
+        after = now_kst()
     try:
         base = datetime.fromisoformat(s["datetime"])
     except ValueError:
@@ -622,7 +633,7 @@ def next_occurrence(s, after: datetime = None):
 
 
 def get_upcoming_occurrences(within_days: int = 30):
-    now = datetime.now()
+    now = now_kst()
     end = now + timedelta(days=within_days)
     result = []
     for s in load_schedules():
@@ -647,7 +658,7 @@ def is_past_schedule(s) -> bool:
     if s.get("recurrence", "none") != "none":
         return False
     try:
-        return datetime.fromisoformat(s["datetime"]) < datetime.now()
+        return datetime.fromisoformat(s["datetime"]) < now_kst()
     except ValueError:
         return False
 
@@ -667,7 +678,7 @@ def add_memo(title: str, content: str, tags: list = None):
     items = load_memos()
     items.append({
         "id": str(uuid.uuid4()),
-        "created_at": datetime.now().isoformat(timespec="minutes"),
+        "created_at": now_kst().isoformat(timespec="minutes"),
         "title": title,
         "content": content,
         "tags": tags or [],
@@ -704,7 +715,7 @@ def add_todo(title: str, priority: str = "medium"):
     items = load_todos()
     items.append({
         "id": str(uuid.uuid4()),
-        "created_at": datetime.now().isoformat(timespec="minutes"),
+        "created_at": now_kst().isoformat(timespec="minutes"),
         "title": title,
         "completed": False,
         "completed_at": None,
@@ -719,7 +730,7 @@ def toggle_todo(item_id: str):
         if t["id"] == item_id:
             t["completed"] = not t["completed"]
             t["completed_at"] = (
-                datetime.now().isoformat(timespec="minutes") if t["completed"] else None
+                now_kst().isoformat(timespec="minutes") if t["completed"] else None
             )
     save_todos(items)
 
@@ -737,11 +748,11 @@ def save_habits(items): _save(HABITS_FILE, items)
 def add_habit(name: str, icon: str = "✅"):
     items = load_habits()
     items.append({"id": str(uuid.uuid4()), "name": name, "icon": icon,
-                  "created_at": date.today().isoformat(), "check_dates": []})
+                  "created_at": today_kst().isoformat(), "check_dates": []})
     save_habits(items)
 
 def toggle_habit(habit_id: str, d: str = None):
-    d = d or date.today().isoformat()
+    d = d or today_kst().isoformat()
     items = load_habits()
     for h in items:
         if h["id"] == habit_id:
@@ -757,14 +768,14 @@ def delete_habit(habit_id: str):
 def habit_streak(h) -> int:
     checked = set(h.get("check_dates", []))
     streak = 0
-    d = date.today()
+    d = today_kst()
     while d.isoformat() in checked:
         streak += 1
         d -= timedelta(days=1)
     return streak
 
 def habit_week_status(h) -> list:
-    today = date.today()
+    today = today_kst()
     monday = today - timedelta(days=today.weekday())
     checked = set(h.get("check_dates", []))
     return [(monday + timedelta(days=i)).isoformat() in checked for i in range(7)]
@@ -788,14 +799,14 @@ def add_goal(title: str, description: str, deadline: str, target: int = 100, goa
     items.append({"id": str(uuid.uuid4()), "title": title, "description": description,
                   "deadline": deadline, "progress": 0, "target": target,
                   "goal_type": goal_type,
-                  "created_at": date.today().isoformat(), "completed": False})
+                  "created_at": today_kst().isoformat(), "completed": False})
     save_goals(items)
 
 
 def compute_auto_goal_progress(goal: dict) -> int:
     """자동 추적 목표의 현재 진행값을 데이터에서 계산"""
     gtype = goal.get("goal_type", "manual")
-    today = date.today()
+    today = today_kst()
     prefix = f"{today.year:04d}-{today.month:02d}"
     if gtype == "workout_count":
         return sum(1 for w in load_workouts() if w["date"].startswith(prefix))
@@ -825,7 +836,7 @@ def save_ledger(items): _save(LEDGER_FILE, items)
 def add_ledger(entry_type: str, category: str, amount: int, note: str = "", entry_date: str = None):
     items = load_ledger()
     items.append({"id": str(uuid.uuid4()),
-                  "date": entry_date or date.today().isoformat(),
+                  "date": entry_date or today_kst().isoformat(),
                   "type": entry_type, "category": category,
                   "amount": amount, "note": note})
     items.sort(key=lambda x: x["date"], reverse=True)
@@ -852,7 +863,7 @@ def add_book(title: str, author: str = "", status: str = "want"):
     items = load_books()
     items.append({"id": str(uuid.uuid4()), "title": title, "author": author,
                   "status": status, "rating": 0, "note": "",
-                  "added_at": date.today().isoformat(), "finished_at": None})
+                  "added_at": today_kst().isoformat(), "finished_at": None})
     save_books(items)
 
 def update_book(book_id: str, **kwargs):
@@ -861,7 +872,7 @@ def update_book(book_id: str, **kwargs):
         if b["id"] == book_id:
             b.update(kwargs)
             if kwargs.get("status") == "done" and not b.get("finished_at"):
-                b["finished_at"] = date.today().isoformat()
+                b["finished_at"] = today_kst().isoformat()
     save_books(items)
 
 def delete_book(book_id: str):
@@ -877,7 +888,7 @@ def save_workouts(items): _save(WORKOUTS_FILE, items)
 def add_workout(workout_type: str, duration: int, note: str = "", workout_date: str = None):
     items = load_workouts()
     items.append({"id": str(uuid.uuid4()),
-                  "date": workout_date or date.today().isoformat(),
+                  "date": workout_date or today_kst().isoformat(),
                   "type": workout_type, "duration": duration, "note": note})
     items.sort(key=lambda x: x["date"], reverse=True)
     save_workouts(items)
@@ -893,7 +904,7 @@ def save_mood(items): _save(MOOD_FILE, items)
 
 def add_mood(score: int, note: str = ""):
     items = load_mood()
-    today = date.today().isoformat()
+    today = today_kst().isoformat()
     items = [m for m in items if m["date"] != today]   # 오늘 것 교체
     items.append({"id": str(uuid.uuid4()), "date": today,
                   "score": score, "emoji": MOOD_EMOJIS[score - 1], "note": note})
@@ -914,7 +925,7 @@ def add_link(url: str, title: str, category: str, note: str = ""):
     items = load_links()
     items.append({"id": str(uuid.uuid4()), "url": url,
                   "title": title or url, "category": category,
-                  "note": note, "created_at": date.today().isoformat()})
+                  "note": note, "created_at": today_kst().isoformat()})
     save_links(items)
 
 def delete_link(link_id: str):
@@ -971,7 +982,7 @@ def delete_med(med_id: str):
 
 
 def workout_week_summary() -> dict:
-    today = date.today()
+    today = today_kst()
     monday = today - timedelta(days=today.weekday())
     week_dates = [(monday + timedelta(days=i)).isoformat() for i in range(7)]
     items = [w for w in load_workouts() if w["date"] in week_dates]
@@ -984,7 +995,7 @@ def workout_week_summary() -> dict:
 def export_all_data() -> dict:
     return {
         "version": 3,
-        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "exported_at": now_kst().isoformat(timespec="seconds"),
         "schedules": load_schedules(),
         "memos": load_memos(),
         "todos": load_todos(),
@@ -1149,8 +1160,8 @@ def tool_log_sleep(hours: float, quality: int = 3, note: str = "") -> str:
         quality: 수면 질 1~5 (1:최악, 3:보통, 5:최고). 기본값 3.
         note: 추가 메모 (선택).
     """
-    today = date.today().isoformat()
-    now_dt = datetime.now()
+    today = today_kst().isoformat()
+    now_dt = now_kst()
     wakeup_dt = now_dt
     bedtime_dt = wakeup_dt - timedelta(hours=hours)
     items = load_sleep()
@@ -1212,7 +1223,7 @@ def tool_check_habit(habit_name_keyword: str) -> str:
         habit_name_keyword: 습관 이름에 포함된 단어 (부분 일치).
     """
     items = load_habits()
-    today = date.today().isoformat()
+    today = today_kst().isoformat()
     matched = [h for h in items if habit_name_keyword in h["name"]]
     if not matched:
         return f"'{habit_name_keyword}'을(를) 포함하는 습관이 없습니다."
@@ -1226,7 +1237,7 @@ def tool_check_habit(habit_name_keyword: str) -> str:
 
 def tool_get_today_summary() -> str:
     """오늘의 전체 현황 요약을 반환합니다. '오늘 뭐 했어?', '오늘 현황 알려줘' 같을 때 호출."""
-    today = date.today().isoformat()
+    today = today_kst().isoformat()
     schedules = [s for s in load_schedules() if s["datetime"][:10] == today]
     sch_text = "\n".join(f"  - {s['datetime'][11:16]} {s['title']}" for s in schedules) or "  없음"
     todos_undone = [t for t in load_todos() if not t["completed"]]
@@ -1302,7 +1313,7 @@ def ask_gemini(session_messages: list, system_instruction: str,
 # ════════════════════════════════════════
 def ask_gemini_voice(audio_bytes: bytes, audio_mime: str = "audio/webm") -> tuple:
     """음성 → (인식된 텍스트, 답변) 반환"""
-    now = datetime.now()
+    now = now_kst()
     system = (
         f"너는 사용자의 개인 비서야. "
         f"오늘은 {now.strftime('%Y년 %m월 %d일')}, 지금 시각은 {now.strftime('%H:%M')}이야.\n\n"
@@ -1485,8 +1496,8 @@ def translate_text(text: str, target_lang: str) -> str:
 #  AI 일정 제안
 # ════════════════════════════════════════
 def suggest_schedule() -> str:
-    now   = datetime.now()
-    today = date.today()
+    now   = now_kst()
+    today = today_kst()
     upcoming  = get_upcoming_occurrences(within_days=7)
     todos_p   = [t for t in load_todos() if not t["completed"]]
     goals_a   = [g for g in load_goals() if not g.get("completed")]
@@ -1529,7 +1540,7 @@ def suggest_schedule() -> str:
 #  AI 패턴 분석
 # ════════════════════════════════════════
 def generate_ai_analysis() -> str:
-    today = date.today()
+    today = today_kst()
     monday = today - timedelta(days=today.weekday())
     week_dates = [(monday + timedelta(days=i)).isoformat() for i in range(7)]
 
@@ -1609,7 +1620,7 @@ def generate_ai_analysis() -> str:
 # ════════════════════════════════════════
 def get_daily_data(days: int = 30) -> list:
     """최근 N일 데이터를 날짜별로 통합"""
-    today = date.today()
+    today = today_kst()
     sleep_map  = {s["date"]: s for s in load_sleep()}
     mood_map   = {m["date"]: m for m in load_mood()}
     workout_map, expense_map = {}, {}
@@ -1738,7 +1749,7 @@ def generate_cross_narrative(insights: list) -> str:
 # ════════════════════════════════════════
 def analyze_receipt(image_bytes: bytes, mime_type: str) -> dict:
     """영수증/결제 내역 사진을 Gemini Vision으로 분석해서 지출 항목 반환"""
-    today_str = date.today().isoformat()
+    today_str = today_kst().isoformat()
     prompt = (
         "이 영수증(또는 결제 내역 사진)을 분석해서 다음 JSON 형식으로만 응답하세요:\n"
         f'{{"store":"가게명","date":"{today_str}","items":['
@@ -1764,7 +1775,7 @@ def analyze_receipt(image_bytes: bytes, mime_type: str) -> dict:
 #  알림
 # ════════════════════════════════════════
 def upcoming_for_reminder(within_minutes: int):
-    now = datetime.now()
+    now = now_kst()
     cutoff = now + timedelta(minutes=within_minutes)
     result = []
     for s in load_schedules():
@@ -2093,8 +2104,8 @@ if "pomo_sessions"  not in st.session_state: st.session_state.pomo_sessions = 0
 if "pomo_end_wall"  not in st.session_state: st.session_state.pomo_end_wall = None
 if "pomo_remaining" not in st.session_state: st.session_state.pomo_remaining = POMO_WORK_SEC
 # 캘린더 뷰
-if "cal_year"  not in st.session_state: st.session_state.cal_year  = date.today().year
-if "cal_month" not in st.session_state: st.session_state.cal_month = date.today().month
+if "cal_year"  not in st.session_state: st.session_state.cal_year  = today_kst().year
+if "cal_month" not in st.session_state: st.session_state.cal_month = today_kst().month
 
 st.markdown(build_css(st.session_state.dark_mode), unsafe_allow_html=True)
 
@@ -2218,7 +2229,7 @@ with st.sidebar:
         st.download_button(
             "📥 백업 다운로드",
             data=backup_json.encode("utf-8"),
-            file_name=f"ai-bisya-{date.today()}.json",
+            file_name=f"ai-bisya-{today_kst()}.json",
             mime="application/json",
             use_container_width=True,
         )
@@ -2263,8 +2274,8 @@ def reminder_and_briefing():
     # ── 복약 알림
     if "notified_meds" not in st.session_state:
         st.session_state.notified_meds = set()
-    current_time_str = datetime.now().strftime("%H:%M")
-    today_str = date.today().isoformat()
+    current_time_str = now_kst().strftime("%H:%M")
+    today_str = today_kst().isoformat()
     for med in load_meds():
         if not med.get("enabled", True):
             continue
@@ -2280,14 +2291,14 @@ def reminder_and_briefing():
         return
 
     briefing_time_str = cfg.get("briefing_time", "08:00")
-    now = datetime.now()
+    now = now_kst()
     if now.strftime("%H:%M") != briefing_time_str:
         return
     today_str = now.strftime("%Y-%m-%d")
     if cfg.get("last_briefing_date") == today_str:
         return  # 오늘 이미 전송
 
-    today_scheds = get_occurrences_on_date(date.today())
+    today_scheds = get_occurrences_on_date(today_kst())
     pending = [t for t in load_todos() if not t["completed"]]
 
     lines = []
@@ -2305,7 +2316,7 @@ def reminder_and_briefing():
     # 어제 수면 체크
     sleep_records = load_sleep()
     if sleep_records:
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        yesterday = (today_kst() - timedelta(days=1)).isoformat()
         yesterday_sleep = next((s for s in sleep_records if s["date"] == yesterday), None)
         if yesterday_sleep:
             h = yesterday_sleep["duration"]
@@ -2316,7 +2327,7 @@ def reminder_and_briefing():
 
     # 이번달 지출 경고
     try:
-        now_inner = datetime.now()
+        now_inner = now_kst()
         m_summary = ledger_monthly_summary(now_inner.year, now_inner.month)
         if m_summary["expense"] > 0:
             lines.append(f"💰 이번달 지출 {m_summary['expense']:,}원")
@@ -2336,7 +2347,7 @@ reminder_and_briefing()
 #  페이지: 홈
 # ════════════════════════════════════════
 if page == "🏠 홈":
-    now = datetime.now()
+    now = now_kst()
     weekday_kr = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
     st.title(f"🏠 {now.strftime('%Y년 %m월 %d일')} ({weekday_kr})")
     st.caption(f"지금 {now.strftime('%H:%M')}")
@@ -2344,14 +2355,14 @@ if page == "🏠 홈":
 
     # ── 아침 브리핑 배너 (오전 6~12시 사이, 하루 1번)
     if 6 <= now.hour < 12:
-        briefing_dismissed_key = f"briefing_dismissed_{date.today().isoformat()}"
+        briefing_dismissed_key = f"briefing_dismissed_{today_kst().isoformat()}"
         if not st.session_state.get(briefing_dismissed_key, False):
-            today_scheds_h = get_occurrences_on_date(date.today())
+            today_scheds_h = get_occurrences_on_date(today_kst())
             pending_h = [t for t in load_todos() if not t["completed"]]
             sleep_records_h = load_sleep()
             sleep_warn = ""
             if sleep_records_h:
-                yesterday_h = (date.today() - timedelta(days=1)).isoformat()
+                yesterday_h = (today_kst() - timedelta(days=1)).isoformat()
                 ys = next((s for s in sleep_records_h if s["date"] == yesterday_h), None)
                 if ys and ys["duration"] < 7:
                     icon = "😴" if ys["duration"] < 6 else "🌙"
@@ -2465,7 +2476,7 @@ if page == "🏠 홈":
         1 for s in load_schedules()
         for _ in expand_schedule_in_range(s, now, now + timedelta(days=7))
     )
-    today_str = date.today().isoformat()
+    today_str = today_kst().isoformat()
     habits_all = load_habits()
     habit_done_today = sum(1 for h in habits_all if today_str in h.get("check_dates", []))
     w_week = workout_week_summary()
@@ -2515,7 +2526,7 @@ if page == "🏠 홈":
 
     with col_left:
         st.markdown("### 📅 오늘 일정")
-        today_occs = get_occurrences_on_date(date.today())
+        today_occs = get_occurrences_on_date(today_kst())
         future_occs = [(s, occ) for s, occ in today_occs if occ >= now]
         past_occs = [(s, occ) for s, occ in today_occs if occ < now]
         if not today_occs:
@@ -2600,7 +2611,7 @@ elif page == "💬 채팅":
                     v_text, v_answer = ask_gemini_voice(
                         voice_audio["bytes"], "audio/webm"
                     )
-                    now_v = datetime.now()
+                    now_v = now_kst()
                     st.session_state.messages.append({
                         "role": "user",
                         "content": v_text,
@@ -2641,7 +2652,7 @@ elif page == "💬 채팅":
             image_mime_type = IMAGE_MIME.get(ext, "image/jpeg")
 
         # 타임스탬프 포함해서 메시지 저장
-        now = datetime.now()
+        now = now_kst()
         display_text = f"📷 {user_input}" if image_data else user_input
         st.session_state.messages.append({
             "role": "user",
@@ -2691,7 +2702,7 @@ elif page == "💬 채팅":
                     st.session_state.messages.append({
                         "role": "assistant",
                         "content": answer,
-                        "timestamp": datetime.now().isoformat(timespec="minutes"),
+                        "timestamp": now_kst().isoformat(timespec="minutes"),
                     })
                     # 파일에 저장 (영구 보관)
                     save_chat_history(st.session_state.messages)
@@ -2806,7 +2817,7 @@ elif page == "📅 일정":
         with st.form("add_schedule_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
-                d = st.date_input("날짜", value=date.today())
+                d = st.date_input("날짜", value=today_kst())
             with col2:
                 t = st.time_input("시간", value=time(9, 0))
             title = st.text_input("제목", placeholder="예: 치과 예약")
@@ -2856,7 +2867,7 @@ elif page == "📅 일정":
                     try:
                         edt = datetime.fromisoformat(s["datetime"])
                     except ValueError:
-                        edt = datetime.now()
+                        edt = now_kst()
                     c1, c2 = st.columns(2)
                     with c1:
                         nd = st.date_input("날짜", value=edt.date())
@@ -3232,7 +3243,7 @@ elif page == "🗓️ 캘린더뷰":
         for occ in expand_schedule_in_range(s, start_dt, end_dt):
             day_scheds.setdefault(occ.day, []).append(s["title"])
 
-    today = date.today()
+    today = today_kst()
     week_kr = ["월", "화", "수", "목", "금", "토", "일"]
     header_html = "".join(f"<th>{d}</th>" for d in week_kr)
     cells = ["<td></td>"] * first_wd
@@ -3297,7 +3308,7 @@ elif page == "🔁 습관":
 
     st.write("")
     habits = load_habits()
-    today_str = date.today().isoformat()
+    today_str = today_kst().isoformat()
     week_kr = ["월", "화", "수", "목", "금", "토", "일"]
 
     if not habits:
@@ -3348,7 +3359,7 @@ elif page == "🎯 목표":
             g_desc  = st.text_area("설명 (선택)", height=60)
             g_type_label = st.selectbox("목표 종류", list(GOAL_TYPE_OPTIONS.values()))
             g_type_key = {v: k for k, v in GOAL_TYPE_OPTIONS.items()}[g_type_label]
-            g_deadline = st.date_input("목표 기한", value=date.today().replace(month=12, day=31))
+            g_deadline = st.date_input("목표 기한", value=today_kst().replace(month=12, day=31))
 
             if g_type_key == "manual":
                 g_target = st.number_input("목표값 (예: 100%면 100 입력)", min_value=1, max_value=100000, value=100)
@@ -3382,7 +3393,7 @@ elif page == "🎯 목표":
                 # 자동 추적 목표는 실시간 계산
                 actual_progress = compute_auto_goal_progress(g)
                 target = g.get("target", 100)
-                d_left = (date.fromisoformat(g["deadline"]) - date.today()).days
+                d_left = (date.fromisoformat(g["deadline"]) - today_kst()).days
                 d_txt = f"D-{d_left}" if d_left >= 0 else f"D+{-d_left} 초과"
 
                 if gtype == "expense_limit":
@@ -3453,7 +3464,7 @@ elif page == "📊 리포트":
 
   # ── 월간 리포트
     with tab_month:
-        today = date.today()
+        today = today_kst()
         sel_m = st.selectbox("월 선택", list(range(1,13)), index=today.month-1,
                              format_func=lambda x: f"{x}월", label_visibility="collapsed")
         ml = ledger_monthly_summary(today.year, sel_m)
@@ -3508,7 +3519,7 @@ elif page == "📊 리포트":
 
   # ── 주간 리포트
     with tab_week:
-        today = date.today()
+        today = today_kst()
         monday = today - timedelta(days=today.weekday())
         sunday = monday + timedelta(days=6)
         st.caption(f"{monday.strftime('%m월 %d일')} ~ {sunday.strftime('%m월 %d일')} 리포트")
@@ -3635,7 +3646,7 @@ elif page == "💰 가계부":
     st.caption("수입과 지출을 기록하고 월별 통계를 확인하세요.")
     st.write("")
 
-    today = date.today()
+    today = today_kst()
     tab1, tab2, tab_receipt = st.tabs(["📋 내역", "➕ 추가", "📷 영수증 인식"])
 
     with tab_receipt:
@@ -3853,7 +3864,7 @@ elif page == "🏃 운동":
             with col2:
                 w_dur  = st.number_input("시간 (분)", min_value=1, max_value=600, value=30)
             w_note = st.text_input("메모 (선택)")
-            w_date = st.date_input("날짜", value=date.today())
+            w_date = st.date_input("날짜", value=today_kst())
             if st.form_submit_button("기록하기", type="primary"):
                 add_workout(w_type, int(w_dur), w_note.strip(), w_date.isoformat())
                 st.success("기록 완료!")
@@ -3986,7 +3997,7 @@ elif page == "😊 기분/일기":
     st.caption("오늘 하루 기분을 기록하고 감정 변화를 확인하세요.")
     st.write("")
 
-    today_str = date.today().isoformat()
+    today_str = today_kst().isoformat()
     mood_data = load_mood()
     today_mood = next((m for m in mood_data if m["date"] == today_str), None)
 
@@ -4110,7 +4121,7 @@ elif page == "🌙 수면":
 
     with st.expander("➕ 수면 기록 추가", expanded=not bool(sleep_data)):
         with st.form("add_sleep_form", clear_on_submit=True):
-            s_date  = st.date_input("날짜 (자고 일어난 날)", value=date.today())
+            s_date  = st.date_input("날짜 (자고 일어난 날)", value=today_kst())
             c1, c2  = st.columns(2)
             with c1:
                 s_bed  = st.time_input("취침 시각", value=time(23, 0))
@@ -4218,7 +4229,7 @@ elif page == "📈 차트":
 
     with tab1:
         st.markdown("#### 이번 달 카테고리별 지출")
-        today = date.today()
+        today = today_kst()
         prefix = f"{today.year:04d}-{today.month:02d}"
         ledger_items = [e for e in load_ledger() if e["date"].startswith(prefix) and e["type"] == "expense"]
         if not ledger_items:
@@ -4243,7 +4254,7 @@ elif page == "📈 차트":
         st.markdown("#### 최근 4주 운동 시간")
         rows = []
         for w in range(3, -1, -1):
-            ref = date.today() - timedelta(weeks=w)
+            ref = today_kst() - timedelta(weeks=w)
             mon = ref - timedelta(days=ref.weekday())
             wdates = [(mon + timedelta(days=i)).isoformat() for i in range(7)]
             total_min = sum(wk["duration"] for wk in load_workouts() if wk["date"] in wdates)
@@ -4268,7 +4279,7 @@ elif page == "📈 차트":
         else:
             rows = []
             for i in range(13, -1, -1):
-                d = (date.today() - timedelta(days=i)).isoformat()
+                d = (today_kst() - timedelta(days=i)).isoformat()
                 done = sum(1 for h in habits if d in h.get("check_dates", []))
                 rows.append({"날짜": d[5:], "달성": done, "전체": len(habits)})
             df = pd.DataFrame(rows)
@@ -4305,7 +4316,7 @@ elif page == "🤖 AI분석":
     st.caption("AI가 나의 생활 데이터를 연결해서 다른 앱은 절대 못 해주는 인사이트를 알려줘요.")
     st.write("")
 
-    today = date.today()
+    today = today_kst()
     monday = today - timedelta(days=today.weekday())
 
     # 상단 요약 카드
@@ -4532,7 +4543,7 @@ elif page == "💡 AI제안":
     st.caption("AI가 내 할일·목표·일정을 분석해서 오늘 뭘 해야 할지 알려줘요.")
     st.write("")
 
-    today = date.today()
+    today = today_kst()
     col1, col2, col3 = st.columns(3)
     todos_p = [t for t in load_todos() if not t["completed"]]
     upcoming_week = get_upcoming_occurrences(within_days=7)
