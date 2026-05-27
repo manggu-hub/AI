@@ -45,6 +45,19 @@ create table if not exists public.generations (
     created_at   timestamptz not null default now()
 );
 
+-- ── brand_profiles (브랜드 보이스 — 차별화 핵심)
+create table if not exists public.brand_profiles (
+    id         uuid primary key default gen_random_uuid(),
+    user_id    uuid not null references public.profiles(id) on delete cascade,
+    name       text not null,
+    company    text,
+    tone       text,
+    audience   text,
+    sample     text,          -- 참고 문체 예시
+    avoid      text,          -- 피해야 할 표현/금칙어
+    created_at timestamptz not null default now()
+);
+
 -- ── api_keys (Business 티어 프로그래매틱 접근)
 create table if not exists public.api_keys (
     id           uuid primary key default gen_random_uuid(),
@@ -63,12 +76,14 @@ alter table public.profiles       enable row level security;
 alter table public.subscriptions  enable row level security;
 alter table public.usage_counters enable row level security;
 alter table public.generations    enable row level security;
+alter table public.brand_profiles enable row level security;
 alter table public.api_keys       enable row level security;
 
 create policy "own profile"       on public.profiles       for all using (auth.uid() = id)      with check (auth.uid() = id);
 create policy "own subscriptions" on public.subscriptions  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own usage"         on public.usage_counters for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own generations"   on public.generations    for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "own brands"        on public.brand_profiles for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own api_keys"      on public.api_keys       for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- service_role 키(FastAPI webhook)는 RLS를 우회하므로 별도 정책 불필요.

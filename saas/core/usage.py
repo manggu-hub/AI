@@ -10,11 +10,11 @@ def get_usage(sb, user_id: str) -> int:
 
 
 def check_quota(sb, user_id: str, tier: str) -> tuple[bool, int, int | None]:
-    """(허용 여부, 현재 사용량, 한도) 반환. 한도 None = 무제한."""
+    """(허용 여부, 현재 사용량, 한도) 반환. 한도 None = 무제한(공정사용 상한 적용)."""
     limit = config.tier_limit(tier)
     used = get_usage(sb, user_id)
     if limit is None:
-        return True, used, None
+        return used < config.FAIR_USE_CAP, used, None
     return used < limit, used, limit
 
 

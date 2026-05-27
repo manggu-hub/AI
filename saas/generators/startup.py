@@ -19,6 +19,15 @@ def _investor_system(lang):
     )
 
 
+def _update_system(lang):
+    from generators.base import lang_note
+    return (
+        "You are a startup operator writing a monthly investor update. Structure it as: "
+        "TL;DR, Key Metrics (with MoM change), Wins, Challenges/Lowlights, Asks (how investors "
+        "can help), and a closing. Be transparent and data-driven, not promotional." + lang_note(lang)
+    )
+
+
 def _prompt(p, lang):
     return (
         f"스타트업: {p['company']}\n"
@@ -50,4 +59,6 @@ GENERATORS = [
      "fields": _fields(), "system": _pitch_system, "prompt": _prompt},
     {"key": "startup_investor", "label": "투자자 이메일", "group": "스타트업",
      "fields": _fields(), "system": _investor_system, "prompt": _prompt},
+    {"key": "startup_update", "label": "투자자 월간 업데이트", "group": "스타트업",
+     "fields": _fields(), "system": _update_system, "prompt": _prompt},
 ]

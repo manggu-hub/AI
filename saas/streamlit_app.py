@@ -124,10 +124,22 @@ def _app():
     with st.sidebar:
         st.title("✍️ ContentForge")
         st.caption(st.session_state.email)
-        page = st.radio("메뉴", ["대시보드", "콘텐츠 생성", "생성 이력", "계정"])
+        page = st.radio("메뉴", ["대시보드", "콘텐츠 생성", "브랜드 보이스",
+                                 "생성 이력", "계정"])
+        st.divider()
+        legal = st.radio("문서", ["—", "이용약관", "개인정보처리방침"], label_visibility="collapsed")
         st.divider()
         if st.button("로그아웃"):
             _logout()
+
+    if legal == "이용약관":
+        from pages_ui.legal import show_terms
+        show_terms()
+        return
+    if legal == "개인정보처리방침":
+        from pages_ui.legal import show_privacy
+        show_privacy()
+        return
 
     if page == "대시보드":
         from pages_ui.dashboard import show_dashboard
@@ -135,6 +147,9 @@ def _app():
     elif page == "콘텐츠 생성":
         from pages_ui.generate import show_generate
         show_generate(store, profile)
+    elif page == "브랜드 보이스":
+        from pages_ui.brand import show_brand
+        show_brand(store, profile)
     elif page == "생성 이력":
         from pages_ui.history import show_history
         show_history(store, profile)

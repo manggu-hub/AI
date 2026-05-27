@@ -24,6 +24,10 @@ TIER_LIMITS = {
     "business": None,
 }
 
+# 무제한(Business) 공정사용 상한 — 폭주로 인한 API 비용/마진 손실 방지.
+# 한도 자체는 "무제한"으로 표시하되, 이 선을 넘으면 차단하고 문의 안내.
+FAIR_USE_CAP = 2000
+
 TIER_LABELS = {
     "free": "Free",
     "pro": "Pro ($15/mo)",

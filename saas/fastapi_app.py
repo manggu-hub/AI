@@ -117,7 +117,8 @@ async def api_generate(request: Request, authorization: str = Header(None)):
     params = body.get("params", {})
 
     from core import gemini
-    system = spec["system"](lang)
+    from generators.base import with_brand
+    system = with_brand(spec["system"](lang), body.get("brand"))
     prompt = spec["prompt"](params, lang)
     try:
         output, model = gemini.generate(system, prompt, paid=True)

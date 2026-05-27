@@ -92,7 +92,7 @@ class LocalStore:
         limit = config.tier_limit(tier)
         used = _load("usage.json", {}).get(f"{self.user_id}:{config.current_period()}", 0)
         if limit is None:
-            return True, used, None
+            return used < config.FAIR_USE_CAP, used, None
         return used < limit, used, limit
 
     def increment_usage(self):
@@ -116,6 +116,20 @@ class LocalStore:
         gens = [g for g in _load("generations.json", []) if g["user_id"] == self.user_id]
         gens.sort(key=lambda g: g["created_at"], reverse=True)
         return gens[:limit]
+
+    # ── 브랜드 보이스 ──
+    def list_brands(self):
+        return [b for b in _load("brands.json", []) if b["user_id"] == self.user_id]
+
+    def create_brand(self, data: dict):
+        brands = _load("brands.json", [])
+        brands.append({"id": str(uuid.uuid4()), "user_id": self.user_id,
+                       "created_at": config.now_kst().isoformat(), **data})
+        _save("brands.json", brands)
+
+    def delete_brand(self, brand_id: str):
+        brands = [b for b in _load("brands.json", []) if b["id"] != brand_id]
+        _save("brands.json", brands)
 
     # ── API 키 ──
     def create_api_key(self, label: str) -> str:
@@ -174,6 +188,15 @@ class SupabaseStore:
 
     def recent_generations(self, limit: int = 50):
         return db.recent_generations(self.sb, self.user_id, limit)
+
+    def list_brands(self):
+        return db.list_brands(self.sb, self.user_id)
+
+    def create_brand(self, data: dict):
+        db.create_brand(self.sb, self.user_id, data)
+
+    def delete_brand(self, brand_id: str):
+        db.delete_brand(self.sb, brand_id)
 
     def create_api_key(self, label: str) -> str:
         return db.create_api_key(self.sb, self.user_id, label)

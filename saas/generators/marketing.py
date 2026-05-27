@@ -27,6 +27,16 @@ def _product_system(lang):
     )
 
 
+def _pr_system(lang):
+    from generators.base import lang_note
+    return (
+        "You are a PR professional. Write a press release in standard format: a dateline, "
+        "a strong headline and subheadline, an opening paragraph answering who/what/when/where/why, "
+        "2-3 body paragraphs with a quote, a boilerplate 'About' section, and a media contact line."
+        + lang_note(lang)
+    )
+
+
 def _prompt(p, lang):
     return (
         f"제품/서비스: {p['product']}\n"
@@ -57,4 +67,6 @@ GENERATORS = [
      "fields": _fields(), "system": _ad_system, "prompt": _prompt},
     {"key": "mkt_product", "label": "제품 설명", "group": "마케팅",
      "fields": _fields(), "system": _product_system, "prompt": _prompt},
+    {"key": "mkt_pr", "label": "보도자료", "group": "마케팅",
+     "fields": _fields(), "system": _pr_system, "prompt": _prompt},
 ]

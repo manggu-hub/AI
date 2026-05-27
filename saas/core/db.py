@@ -85,6 +85,21 @@ def upsert_subscription(sb, user_id, stripe_sub_id, price_id, status, period_end
     }, on_conflict="stripe_subscription_id").execute()
 
 
+# ── brand_profiles ──────────────────────────────────────
+def list_brands(sb, user_id: str) -> list[dict]:
+    r = (sb.table("brand_profiles").select("*")
+         .eq("user_id", user_id).order("created_at", desc=True).execute())
+    return r.data or []
+
+
+def create_brand(sb, user_id: str, data: dict):
+    sb.table("brand_profiles").insert({"user_id": user_id, **data}).execute()
+
+
+def delete_brand(sb, brand_id: str):
+    sb.table("brand_profiles").delete().eq("id", brand_id).execute()
+
+
 # ── api_keys (Business 티어) ────────────────────────────
 def create_api_key(sb, user_id: str, label: str) -> str:
     """원본 키 생성 → 해시만 저장하고 원본을 1회 반환."""
