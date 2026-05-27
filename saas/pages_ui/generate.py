@@ -1,14 +1,14 @@
 """생성 페이지: 생성기 선택 → 동적 폼 → 쿼터 체크 → 결과."""
 import streamlit as st
 
-from core import db, gemini, usage
-from generators.base import GENERATORS, groups
+from core import gemini
+from generators.base import groups
 
 
-def show_generate(sb, profile):
+def show_generate(store, profile):
     st.header("✍️ 콘텐츠 생성")
     tier = profile["tier"]
-    ok, used, limit = usage.check_quota(sb, profile["id"], tier)
+    ok, used, limit = store.check_quota(tier)
 
     if limit is not None:
         st.caption(f"이번 달 사용량: {used} / {limit}")
@@ -59,8 +59,8 @@ def show_generate(sb, profile):
             except Exception as e:
                 st.error(f"생성 중 오류가 발생했습니다: {e}")
                 return
-            usage.increment_usage(sb, profile["id"])
-            db.save_generation(sb, profile["id"], spec["key"], language, params, output, model)
+            store.increment_usage()
+            store.save_generation(spec["key"], language, params, output, model)
 
         st.success("완성됐습니다!")
         st.markdown(output)

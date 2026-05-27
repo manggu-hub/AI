@@ -1,10 +1,14 @@
 """ContentForge — AI 콘텐츠 생성 SaaS (Streamlit 진입점).
 
 실행: streamlit run streamlit_app.py
+
+Supabase 자격증명이 있으면 클라우드 모드(멀티유저 + RLS),
+없으면 로컬 모드(data/*.json)로 외부 계정 없이 즉시 동작한다.
 """
 import streamlit as st
 
-from core import auth, config, db
+from core import config
+from core.store import LocalStore, SupabaseStore
 
 st.set_page_config(page_title="ContentForge", page_icon="✍️", layout="centered")
 
@@ -18,9 +22,29 @@ def _client_for(access_token: str, refresh_token: str):
     return sb
 
 
+def _get_store():
+    if config.has_supabase():
+        sb = _client_for(st.session_state.access_token, st.session_state.refresh_token)
+        return SupabaseStore(sb, st.session_state.user_id, st.session_state.email)
+    return LocalStore(st.session_state.user_id, st.session_state.email)
+
+
+def _set_session(user_id, email, access=None, refresh=None):
+    st.session_state.user_id = user_id
+    st.session_state.email = email
+    if access:
+        st.session_state.access_token = access
+        st.session_state.refresh_token = refresh
+
+
 def _login_gate():
+    cloud = config.has_supabase()
     st.title("✍️ ContentForge")
     st.caption("스타트업·프리랜서를 위한 AI 콘텐츠 생성 도구")
+    if not cloud:
+        st.info("🔧 로컬 모드로 실행 중입니다 (Supabase 미설정). "
+                "계정과 데이터는 이 컴퓨터에만 저장됩니다.")
+
     tab_login, tab_signup = st.tabs(["로그인", "회원가입"])
 
     with tab_login:
@@ -28,43 +52,74 @@ def _login_gate():
             email = st.text_input("이메일")
             pw = st.text_input("비밀번호", type="password")
             if st.form_submit_button("로그인", type="primary", use_container_width=True):
-                try:
-                    res = auth.sign_in(email, pw)
-                except Exception as e:
-                    st.error(f"로그인 실패: {e}")
-                    return
-                if res.session:
-                    st.session_state.access_token = res.session.access_token
-                    st.session_state.refresh_token = res.session.refresh_token
-                    st.session_state.user_id = res.user.id
-                    st.session_state.email = res.user.email
-                    st.rerun()
-                else:
-                    st.error("로그인에 실패했습니다. 이메일 인증이 필요할 수 있습니다.")
+                _do_login(cloud, email, pw)
 
     with tab_signup:
         with st.form("signup"):
             email = st.text_input("이메일 ")
             pw = st.text_input("비밀번호 (6자 이상)", type="password")
             if st.form_submit_button("가입하기", use_container_width=True):
-                try:
-                    res = auth.sign_up(email, pw)
-                except Exception as e:
-                    st.error(f"가입 실패: {e}")
-                    return
-                if res.session:
-                    st.session_state.access_token = res.session.access_token
-                    st.session_state.refresh_token = res.session.refresh_token
-                    st.session_state.user_id = res.user.id
-                    st.session_state.email = res.user.email
-                    st.rerun()
-                else:
-                    st.success("가입 완료! 이메일 인증 후 로그인해주세요.")
+                _do_signup(cloud, email, pw)
+
+
+def _do_login(cloud, email, pw):
+    if cloud:
+        from core import auth
+        try:
+            res = auth.sign_in(email, pw)
+        except Exception as e:
+            st.error(f"로그인 실패: {e}")
+            return
+        if res.session:
+            _set_session(res.user.id, res.user.email,
+                         res.session.access_token, res.session.refresh_token)
+            st.rerun()
+        else:
+            st.error("로그인 실패. 이메일 인증이 필요할 수 있습니다.")
+    else:
+        user, err = LocalStore.sign_in(email, pw)
+        if err:
+            st.error(err)
+        else:
+            _set_session(user["id"], user["email"])
+            st.rerun()
+
+
+def _do_signup(cloud, email, pw):
+    if cloud:
+        from core import auth
+        try:
+            res = auth.sign_up(email, pw)
+        except Exception as e:
+            st.error(f"가입 실패: {e}")
+            return
+        if res.session:
+            _set_session(res.user.id, res.user.email,
+                         res.session.access_token, res.session.refresh_token)
+            st.rerun()
+        else:
+            st.success("가입 완료! 이메일 인증 후 로그인해주세요.")
+    else:
+        user, err = LocalStore.sign_up(email, pw)
+        if err:
+            st.error(err)
+        else:
+            _set_session(user["id"], user["email"])
+            st.rerun()
+
+
+def _logout():
+    if config.has_supabase():
+        from core import auth
+        auth.sign_out()
+    for k in ("access_token", "refresh_token", "user_id", "email"):
+        st.session_state.pop(k, None)
+    st.rerun()
 
 
 def _app():
-    sb = _client_for(st.session_state.access_token, st.session_state.refresh_token)
-    profile = db.ensure_profile(sb, st.session_state.user_id, st.session_state.email)
+    store = _get_store()
+    profile = store.ensure_profile()
 
     with st.sidebar:
         st.title("✍️ ContentForge")
@@ -72,26 +127,23 @@ def _app():
         page = st.radio("메뉴", ["대시보드", "콘텐츠 생성", "생성 이력", "계정"])
         st.divider()
         if st.button("로그아웃"):
-            auth.sign_out()
-            for k in ("access_token", "refresh_token", "user_id", "email"):
-                st.session_state.pop(k, None)
-            st.rerun()
+            _logout()
 
     if page == "대시보드":
         from pages_ui.dashboard import show_dashboard
-        show_dashboard(sb, profile)
+        show_dashboard(store, profile)
     elif page == "콘텐츠 생성":
         from pages_ui.generate import show_generate
-        show_generate(sb, profile)
+        show_generate(store, profile)
     elif page == "생성 이력":
         from pages_ui.history import show_history
-        show_history(sb, profile)
+        show_history(store, profile)
     elif page == "계정":
         from pages_ui.account import show_account
-        show_account(sb, profile)
+        show_account(store, profile)
 
 
-if "access_token" not in st.session_state:
+if "user_id" not in st.session_state:
     _login_gate()
 else:
     _app()

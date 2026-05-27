@@ -1,13 +1,12 @@
 """생성 이력: 타입/언어 필터."""
 import streamlit as st
 
-from core import db
 from generators.base import GENERATORS
 
 
-def show_history(sb, profile):
+def show_history(store, profile):
     st.header("📚 생성 이력")
-    rows = db.recent_generations(sb, profile["id"], limit=200)
+    rows = store.recent_generations(limit=200)
     if not rows:
         st.info("아직 생성한 콘텐츠가 없습니다.")
         return

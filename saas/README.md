@@ -17,13 +17,31 @@
 | Pro | $15/월 | 100회 | 고품질 모델 |
 | Business | $30/월 | 무제한 | + REST API |
 
-## 설치 & 실행
+## 빠른 시작 (로컬 모드 — 외부 계정 불필요)
+
+Supabase/Stripe 없이 **Gemini API 키만** 있으면 전체 앱이 바로 돕니다.
+계정·생성물·사용량은 `data/*.json`(gitignore됨)에 로컬 저장되고, 플랜은
+계정 페이지에서 버튼으로 직접 전환해 테스트할 수 있습니다.
+
+```bash
+cd saas
+pip install -r requirements.txt
+echo "GEMINI_API_KEY=발급받은키" > .env
+streamlit run streamlit_app.py
+```
+
+회원가입 → 콘텐츠 생성 → 사용량 쿼터 → 이력 → 플랜 전환까지 그대로 동작합니다.
+실제 다중 사용자 서비스로 배포하려면 아래 클라우드 모드를 설정하세요.
+
+## 설치 & 실행 (클라우드 모드 — 실서비스)
 
 ```bash
 cd saas
 pip install -r requirements.txt
 cp .env.example .env      # 값 채우기
 ```
+
+Supabase 자격증명이 채워지면 자동으로 클라우드 모드(멀티유저 + RLS)로 전환됩니다.
 
 ### 1. Supabase 설정
 1. [supabase.com](https://supabase.com)에서 프로젝트 생성

@@ -55,3 +55,12 @@ def current_period() -> str:
 
 def tier_limit(tier: str) -> int | None:
     return TIER_LIMITS.get(tier, TIER_LIMITS["free"])
+
+
+def has_supabase() -> bool:
+    """Supabase 자격증명이 있으면 클라우드 모드, 없으면 로컬 모드."""
+    return bool(SUPABASE_URL and SUPABASE_ANON_KEY)
+
+
+def has_stripe() -> bool:
+    return bool(STRIPE_SECRET_KEY and STRIPE_PRICE_PRO)

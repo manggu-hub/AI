@@ -1,14 +1,14 @@
 """대시보드: 사용량 미터 + 플랜 + 최근 생성물."""
 import streamlit as st
 
-from core import config, db, usage
+from core import config
 from generators.base import GENERATORS
 
 
-def show_dashboard(sb, profile):
+def show_dashboard(store, profile):
     st.header("📊 대시보드")
     tier = profile["tier"]
-    _ok, used, limit = usage.check_quota(sb, profile["id"], tier)
+    _ok, used, limit = store.check_quota(tier)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("현재 플랜", config.TIER_LABELS.get(tier, tier))
@@ -22,7 +22,7 @@ def show_dashboard(sb, profile):
 
     st.divider()
     st.subheader("최근 생성물")
-    rows = db.recent_generations(sb, profile["id"], limit=5)
+    rows = store.recent_generations(limit=5)
     if not rows:
         st.info("아직 생성한 콘텐츠가 없습니다. **콘텐츠 생성**에서 시작해보세요!")
         return
