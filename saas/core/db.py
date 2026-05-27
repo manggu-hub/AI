@@ -85,19 +85,84 @@ def upsert_subscription(sb, user_id, stripe_sub_id, price_id, status, period_end
     }, on_conflict="stripe_subscription_id").execute()
 
 
-# ── brand_profiles ──────────────────────────────────────
-def list_brands(sb, user_id: str) -> list[dict]:
-    r = (sb.table("brand_profiles").select("*")
-         .eq("user_id", user_id).order("created_at", desc=True).execute())
-    return r.data or []
+# ── workspaces / 팀 ─────────────────────────────────────
+def list_workspaces(sb, user_id: str, email: str) -> list[dict]:
+    owned = sb.table("workspaces").select("*").eq("owner_id", user_id).execute().data or []
+    mrows = sb.table("workspace_members").select("workspace_id").eq("email", email).execute().data or []
+    member_ids = [m["workspace_id"] for m in mrows]
+    member_ws = []
+    if member_ids:
+        member_ws = sb.table("workspaces").select("*").in_("id", member_ids).execute().data or []
+    seen, out = set(), []
+    for w in owned + member_ws:
+        if w["id"] not in seen:
+            seen.add(w["id"]); out.append(w)
+    return out
 
 
-def create_brand(sb, user_id: str, data: dict):
-    sb.table("brand_profiles").insert({"user_id": user_id, **data}).execute()
+def create_workspace(sb, user_id: str, email: str, name: str) -> str:
+    r = sb.table("workspaces").insert(
+        {"owner_id": user_id, "owner_email": email, "name": name}
+    ).execute()
+    return r.data[0]["id"]
+
+
+def invite_member(sb, ws_id: str, email: str):
+    sb.table("workspace_members").upsert(
+        {"workspace_id": ws_id, "email": email, "role": "member"},
+        on_conflict="workspace_id,email",
+    ).execute()
+
+
+def list_members(sb, ws_id: str) -> list[dict]:
+    ws = sb.table("workspaces").select("owner_email").eq("id", ws_id).execute().data
+    out = [{"email": ws[0]["owner_email"], "role": "owner"}] if ws else []
+    rows = sb.table("workspace_members").select("email,role").eq("workspace_id", ws_id).execute().data or []
+    out += [{"email": r["email"], "role": r["role"]} for r in rows]
+    return out
+
+
+def remove_member(sb, ws_id: str, email: str):
+    sb.table("workspace_members").delete().eq("workspace_id", ws_id).eq("email", email).execute()
+
+
+# ── brand_profiles (개인 + 워크스페이스 공유) ──────────────
+def list_brands(sb, user_id: str, ws_ids: list[str] | None = None) -> list[dict]:
+    personal = (sb.table("brand_profiles").select("*")
+                .eq("user_id", user_id).is_("workspace_id", "null")
+                .order("created_at", desc=True).execute().data or [])
+    shared = []
+    if ws_ids:
+        shared = (sb.table("brand_profiles").select("*")
+                  .in_("workspace_id", ws_ids).execute().data or [])
+    return personal + shared
+
+
+def create_brand(sb, user_id: str, data: dict, workspace_id: str | None = None):
+    sb.table("brand_profiles").insert(
+        {"user_id": user_id, "workspace_id": workspace_id, **data}
+    ).execute()
 
 
 def delete_brand(sb, brand_id: str):
     sb.table("brand_profiles").delete().eq("id", brand_id).execute()
+
+
+# ── integrations ────────────────────────────────────────
+def list_integrations(sb, user_id: str) -> list[dict]:
+    r = (sb.table("integrations").select("*")
+         .eq("user_id", user_id).order("created_at", desc=True).execute())
+    return r.data or []
+
+
+def create_integration(sb, user_id: str, type_: str, name: str, cfg: dict):
+    sb.table("integrations").insert(
+        {"user_id": user_id, "type": type_, "name": name, "config": cfg}
+    ).execute()
+
+
+def delete_integration(sb, integration_id: str):
+    sb.table("integrations").delete().eq("id", integration_id).execute()
 
 
 # ── api_keys (Business 티어) ────────────────────────────

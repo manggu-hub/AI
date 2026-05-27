@@ -5,3 +5,5 @@ stripe
 supabase
 google-genai
 python-dotenv
+requests
+markdown

@@ -7,6 +7,11 @@ def show_brand(store, profile):
     st.caption("브랜드를 저장해두면 콘텐츠 생성 시 톤·대상·문체를 일관되게 적용합니다. "
                "이게 범용 AI와 다른 핵심 차별점입니다.")
 
+    workspaces = store.list_workspaces()
+    scope_map = {"개인 (나만)": None}
+    for w in workspaces:
+        scope_map[f"워크스페이스: {w['name']}"] = w["id"]
+
     with st.expander("➕ 새 브랜드 추가", expanded=False):
         with st.form("brand_form"):
             name = st.text_input("브랜드 이름 *", placeholder="예: 우리 회사 공식 보이스")
@@ -15,6 +20,8 @@ def show_brand(store, profile):
             audience = st.text_input("핵심 독자", placeholder="예: 초기 스타트업 창업자와 마케터")
             sample = st.text_area("참고 문체 예시", placeholder="우리 브랜드다운 글 한두 문단을 붙여넣으세요. 스타일을 모방합니다.")
             avoid = st.text_input("피해야 할 표현 / 금칙어", placeholder="예: 과장된 수식어, 느낌표 남발")
+            scope = st.selectbox("공유 범위", list(scope_map.keys()),
+                                 help="워크스페이스를 선택하면 팀원과 공유됩니다.")
             if st.form_submit_button("저장", type="primary"):
                 if not name.strip():
                     st.error("브랜드 이름은 필수입니다.")
@@ -22,7 +29,7 @@ def show_brand(store, profile):
                     store.create_brand({
                         "name": name, "company": company, "tone": tone,
                         "audience": audience, "sample": sample, "avoid": avoid,
-                    })
+                    }, workspace_id=scope_map[scope])
                     st.success("저장됐습니다.")
                     st.rerun()
 
@@ -31,9 +38,12 @@ def show_brand(store, profile):
         st.info("아직 등록된 브랜드가 없습니다. 위에서 하나 추가해보세요.")
         return
 
+    ws_names = {w["id"]: w["name"] for w in workspaces}
     st.subheader("등록된 브랜드")
     for b in brands:
-        with st.expander(f"🎨 {b['name']}"):
+        wid = b.get("workspace_id")
+        tag = f"👥 {ws_names.get(wid, '워크스페이스')}" if wid else "🔒 개인"
+        with st.expander(f"🎨 {b['name']}  ·  {tag}"):
             if b.get("company"):
                 st.write(f"**회사/제품:** {b['company']}")
             if b.get("tone"):
@@ -44,6 +54,9 @@ def show_brand(store, profile):
                 st.write(f"**문체 예시:** {b['sample']}")
             if b.get("avoid"):
                 st.write(f"**금칙:** {b['avoid']}")
-            if st.button("삭제", key=f"del_{b['id']}"):
-                store.delete_brand(b["id"])
-                st.rerun()
+            if b.get("user_id") == profile["id"]:
+                if st.button("삭제", key=f"del_{b['id']}"):
+                    store.delete_brand(b["id"])
+                    st.rerun()
+            else:
+                st.caption("이 브랜드는 다른 팀원이 만들었습니다 (삭제는 작성자만 가능).")

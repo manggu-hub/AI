@@ -96,6 +96,9 @@ def _render_result(store, tier):
     st.download_button("📥 다운로드", lg["output"], file_name=f"{lg['spec_key']}.md",
                        mime="text/markdown")
 
+    from pages_ui._publish_ui import publish_block
+    publish_block(store, lg["output"], lg["spec_key"], key="gen")
+
     st.divider()
     cols = st.columns(2)
     if cols[0].button("🔄 다시 생성", use_container_width=True):

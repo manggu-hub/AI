@@ -34,3 +34,5 @@ def show_history(store, profile):
             st.download_button("📥 다운로드", r["output_text"],
                                file_name=f"{r['type']}_{r['id'][:8]}.md",
                                mime="text/markdown", key=f"dl_{r['id']}")
+            from pages_ui._publish_ui import publish_block
+            publish_block(store, r["output_text"], r["type"], key=r["id"])
