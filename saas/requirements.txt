@@ -1,0 +1,7 @@
+streamlit
+fastapi
+uvicorn
+stripe
+supabase
+google-genai
+python-dotenv
