@@ -10,7 +10,7 @@ import streamlit as st
 from core import config
 from core.store import LocalStore, SupabaseStore
 
-st.set_page_config(page_title="ContentForge", page_icon="✍️", layout="centered")
+st.set_page_config(page_title="수주AI", page_icon="🎯", layout="centered")
 
 
 @st.cache_resource
@@ -39,8 +39,8 @@ def _set_session(user_id, email, access=None, refresh=None):
 
 def _login_gate():
     cloud = config.has_supabase()
-    st.title("✍️ ContentForge")
-    st.caption("스타트업·프리랜서를 위한 AI 콘텐츠 생성 도구")
+    st.title("🎯 수주AI")
+    st.caption("프리랜서 수주율을 높이는 AI 콘텐츠 도구")
     if not cloud:
         st.info("🔧 로컬 모드로 실행 중입니다 (Supabase 미설정). "
                 "계정과 데이터는 이 컴퓨터에만 저장됩니다.")
@@ -122,7 +122,7 @@ def _app():
     profile = store.ensure_profile()
 
     with st.sidebar:
-        st.title("✍️ ContentForge")
+        st.title("🎯 수주AI")
         st.caption(st.session_state.email)
         page = st.radio("메뉴", ["대시보드", "콘텐츠 생성", "브랜드 보이스", "팀",
                                  "생성 이력", "연동", "계정"])

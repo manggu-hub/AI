@@ -7,6 +7,7 @@ from generators.base import GENERATORS
 
 def show_dashboard(store, profile):
     st.header("📊 대시보드")
+    st.caption("수주AI가 만들어준 콘텐츠로 더 많은 클라이언트를 확보하세요.")
     tier = profile["tier"]
     _ok, used, limit = store.check_quota(tier)
 
@@ -24,7 +25,7 @@ def show_dashboard(store, profile):
     st.subheader("최근 생성물")
     rows = store.recent_generations(limit=5)
     if not rows:
-        st.info("아직 생성한 콘텐츠가 없습니다. **콘텐츠 생성**에서 시작해보세요!")
+        st.info("아직 생성한 콘텐츠가 없습니다. **콘텐츠 생성**에서 제안서나 크몽 서비스 페이지부터 만들어보세요!")
         return
     for r in rows:
         spec = GENERATORS.get(r["type"])
