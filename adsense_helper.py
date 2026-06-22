@@ -307,7 +307,7 @@ def _gemini_client():
     return genai.Client(api_key=API_KEY)
 
 
-def ai_generate(prompt: str) -> str:
+def ai_generate(prompt: str, temperature: float = 0.75) -> str:
     client = _gemini_client()
     if not client:
         return "⚠️ GEMINI_API_KEY 환경변수가 설정되지 않았습니다."
@@ -316,8 +316,8 @@ def ai_generate(prompt: str) -> str:
             model="gemini-2.0-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=0.7,
-                max_output_tokens=2048,
+                temperature=temperature,
+                max_output_tokens=8192,
             ),
         )
         return response.text
@@ -368,23 +368,133 @@ HTML 태그 포함하여 완성된 콘텐츠만 출력해주세요.
 """)
 
 
-def gen_quality_article(topic: str, niche: str) -> str:
+# ── ① 승인 잘되는 주제 자동 선정
+def gen_adsense_topics(niche: str) -> str:
     return ai_generate(f"""
-구글 애드센스 승인 기준에 맞는 고품질 블로그 글을 작성해주세요.
-한국어로, SEO에 최적화되어 있고, 독창적이고 유익한 내용으로 작성해주세요.
+'{niche}' 분야에서 구글 애드센스 승인과 수익화에 유리한 블로그 주제 10개를 선정해주세요.
+
+각 주제마다 다음 정보를 표 형식으로 작성해주세요:
+| 번호 | 주제 제목 | 검색 의도 | AdSense 유리도 | 예상 CPC 수준 | 이유 |
+
+- 검색 의도: 정보형/비교형/구매형/방법형 중 하나
+- AdSense 유리도: ★★★★★ ~ ★★☆☆☆ (5점 만점)
+- 예상 CPC 수준: 높음/보통/낮음
+- 이유: 왜 이 주제가 애드센스 승인과 수익화에 유리한지 한 줄로
+
+조건:
+- 구글 정책 위반 주제 제외 (성인, 도박, 의약품 과장 등)
+- 광고 단가(CPC)가 높은 틈새 주제 우선
+- 검색량이 있으면서 경쟁이 적당한 주제
+- 한국어 검색자가 많은 주제
+
+한국어로 작성해주세요.
+""", temperature=0.6)
+
+
+# ── ② SEO 키워드 분석
+def gen_keyword_research(topic: str, niche: str) -> str:
+    return ai_generate(f"""
+다음 블로그 주제에 대한 SEO 키워드 분석을 해주세요.
 
 - 주제: {topic}
 - 분야: {niche}
 
-요구사항:
-- 최소 800단어 이상
-- H2, H3 소제목 활용
-- 구체적인 정보, 팁, 예시 포함
-- 자연스러운 문체
-- 마무리 요약 포함
+다음 형식으로 작성해주세요:
 
-HTML 태그 없이 마크다운 형식으로만 출력해주세요.
-""")
+## 🎯 주요 타겟 키워드 (메인)
+- 키워드 1개: 검색 의도, 월간 검색량 추정, 경쟁도
+
+## 🔍 보조 키워드 (서브, 5개)
+번호, 키워드, 검색 의도, 활용 위치(제목/소제목/본문)
+
+## 💡 LSI 키워드 (연관어, 10개)
+자연스럽게 본문에 삽입할 연관 키워드 목록
+
+## 🏷️ 롱테일 키워드 (5개)
+구체적 검색어, 경쟁이 낮고 전환율 높은 키워드
+
+## 📌 제목에 꼭 넣을 핵심 단어
+CTR을 높이는 파워워드와 숫자 조합 추천
+
+한국어로 작성해주세요.
+""", temperature=0.5)
+
+
+# ── ③ CTR 높이는 제목 생성
+def gen_seo_titles(topic: str, keywords: str) -> str:
+    return ai_generate(f"""
+다음 주제와 키워드로 클릭률(CTR)을 극대화하는 블로그 제목 5개를 생성해주세요.
+
+- 주제: {topic}
+- 핵심 키워드: {keywords}
+
+각 제목 유형별로 1개씩:
+1. 숫자형: "N가지", "N단계" 등 숫자 포함
+2. 질문형: 독자의 궁금증을 자극하는 질문
+3. 방법형: "하는 법", "방법", "가이드" 포함
+4. 비교/순위형: "추천", "순위", "비교" 포함
+5. 감성/공감형: 독자의 고민/감정에 공감하는 제목
+
+각 제목 옆에 왜 CTR이 높은지 한 줄 이유도 작성해주세요.
+제목은 40~60자 사이로, 검색 결과에서 잘리지 않게 만들어주세요.
+
+한국어로 작성해주세요.
+""", temperature=0.8)
+
+
+# ── ④ E-E-A-T 완전 반영 고품질 글 생성 (3200자+)
+def gen_quality_article(topic: str, niche: str, keywords: str, title: str, search_intent: str) -> str:
+    return ai_generate(f"""
+당신은 {niche} 분야의 10년 경력 전문 블로거입니다.
+구글 E-E-A-T(경험·전문성·권위성·신뢰성) 원칙을 완벽히 반영한 고품질 블로그 글을 작성해주세요.
+
+【기본 정보】
+- 제목: {title}
+- 주제: {topic}
+- 분야: {niche}
+- 핵심 키워드: {keywords}
+- 검색 의도: {search_intent}
+
+【필수 구조 — 반드시 이 순서로 작성】
+
+1. 📌 목차 (클릭 가능한 앵커 링크 형태로, ## 목차 헤더 아래 번호 목록)
+
+2. 🔥 도입부 (150자 이상)
+   - 독자의 고민/문제 상황에 공감하는 문장으로 시작
+   - "저도 처음에는..." "많은 분들이..." 같은 경험 공유 문장 포함
+   - 이 글을 읽으면 얻을 수 있는 것 명시
+
+3. 📖 본문 (H2 소제목 4~6개, 각 H2 아래 H3 2~3개)
+   - 각 소제목 아래 300자 이상 상세 설명
+   - 구체적 수치, 통계, 사례, 비교 포함
+   - 전문용어 사용 후 괄호 안에 쉬운 설명 병기 (E-E-A-T 전문성)
+   - "제 경험으로는...", "실제로 해보니..." 등 경험 기반 문장 (E-E-A-T 경험)
+   - 독자가 바로 실행할 수 있는 구체적 팁과 단계
+   - 핵심 키워드를 자연스럽게 3~5회 삽입 (키워드 스터핑 금지)
+
+4. ✅ 핵심 요약 (글머리 기호 5~7개로 이 글의 핵심 정리)
+
+5. 💬 CTA (Call-to-Action)
+   - 댓글 유도: "여러분의 경험은 어떠신가요? 댓글로 알려주세요!"
+   - 구독/북마크 유도
+   - 관련 글 추천 (예시 제목 2개)
+
+6. #️⃣ 해시태그 (10~15개, 줄 맨 아래)
+   - #{niche}관련 태그들을 #태그 형태로 나열
+
+【문체 원칙 — 사람이 쓴 것처럼】
+- 딱딱한 AI 문체 금지. 친근하고 대화하듯 자연스럽게
+- 문장 길이를 다양하게 (짧은 문장 + 긴 문장 혼합)
+- "사실은요...", "솔직히 말씀드리면...", "이건 정말 중요한데요" 같은 구어체 표현 자연스럽게 포함
+- 단락마다 1~2줄의 짧은 임팩트 문장 삽입
+- 독자를 "여러분"으로 지칭
+
+【분량 기준】
+- 전체 3,200자 이상 (한국어 기준, 공백 포함)
+- 본문만 2,500자 이상
+
+마크다운 형식으로만 출력해주세요. (HTML 태그 금지)
+""", temperature=0.8)
 
 
 def gen_improvement_plan(report: SiteReport) -> str:
@@ -579,55 +689,165 @@ HTML 형식으로, 신뢰감 있고 친근한 톤으로 작성해주세요.
 
 
 def _tab_content():
-    st.header("✍️ 고품질 콘텐츠 생성")
-    st.info("애드센스 정책에 적합한 독창적, 유익한 콘텐츠를 AI가 생성합니다.")
+    st.header("✍️ E-E-A-T 고품질 콘텐츠 생성")
+    st.info(
+        "**9가지 요소 자동 반영**: E-E-A-T · 검색 의도 구조 · CTR 제목 · 승인 주제 선정 · "
+        "3200자+ · 전문성/신뢰성 · 자연스러운 문체 · SEO 키워드 · 목차/해시태그/CTA"
+    )
 
-    niche = st.text_input("블로그 주제/분야", placeholder="예: 재테크, IT 기기 리뷰, 맛집, 육아 등")
+    # ── Step 0: 기본 설정
+    niche = st.text_input(
+        "블로그 분야",
+        placeholder="예: 재테크, IT 기기 리뷰, 육아, 여행, 건강 등",
+        key="ct_niche",
+    )
 
-    col_a, col_b = st.columns([2, 1])
-    with col_a:
-        topic = st.text_input(
-            "글 주제",
-            placeholder="예: 2026년 주목할 만한 ETF 5가지",
-        )
-    with col_b:
-        if st.button("🎲 주제 자동 추천", use_container_width=True):
-            if niche:
-                with st.spinner("주제 추천 중..."):
-                    rec = ai_generate(
-                        f"'{niche}' 블로그에 적합한 구글 애드센스 승인에 유리한 "
-                        f"고품질 글 주제 10개를 번호 목록으로 추천해주세요. 한국어로."
-                    )
-                    st.session_state["topic_recs"] = rec
-            else:
-                st.warning("주제/분야를 먼저 입력해주세요.")
+    st.divider()
 
-    if "topic_recs" in st.session_state:
-        with st.expander("추천 주제 목록 보기"):
-            st.markdown(st.session_state["topic_recs"])
-
-    if st.button("✍️ 고품질 글 생성 (800자+)", type="primary", use_container_width=True):
-        if not topic or not niche:
-            st.warning("주제와 분야를 입력해주세요.")
+    # ── Step 1: 승인 잘되는 주제 자동 선정
+    st.subheader("① 승인 잘되는 주제 자동 선정")
+    if st.button("🎯 AdSense 최적 주제 10개 추천", use_container_width=True, key="btn_topics"):
+        if not niche:
+            st.warning("분야를 먼저 입력해주세요.")
         else:
-            with st.spinner("AI가 고품질 글을 작성 중... (1분 내외)"):
-                article = gen_quality_article(topic, niche)
-                st.session_state["article"] = article
+            with st.spinner("AdSense 유리도·CPC·검색 의도 분석 중..."):
+                st.session_state["topic_table"] = gen_adsense_topics(niche)
 
+    if "topic_table" in st.session_state:
+        st.markdown(st.session_state["topic_table"])
+
+    topic = st.text_input(
+        "선택한 주제 (위 추천에서 복사하거나 직접 입력)",
+        placeholder="예: 2026 ETF 투자 완전 정복",
+        key="ct_topic",
+    )
+
+    st.divider()
+
+    # ── Step 2: SEO 키워드 분석
+    st.subheader("② 검색 상위 노출 키워드 분석")
+    if st.button("🔍 키워드 분석 실행", use_container_width=True, key="btn_kw"):
+        if not topic or not niche:
+            st.warning("분야와 주제를 먼저 입력해주세요.")
+        else:
+            with st.spinner("주요 키워드 · 서브 키워드 · LSI · 롱테일 분석 중..."):
+                st.session_state["kw_result"] = gen_keyword_research(topic, niche)
+
+    if "kw_result" in st.session_state:
+        with st.expander("키워드 분석 결과 보기", expanded=True):
+            st.markdown(st.session_state["kw_result"])
+
+    keywords = st.text_input(
+        "사용할 핵심 키워드 (콤마로 구분)",
+        placeholder="예: ETF 투자, ETF 추천 2026, 배당 ETF",
+        key="ct_kw",
+    )
+
+    st.divider()
+
+    # ── Step 3: CTR 높이는 제목 생성
+    st.subheader("③ CTR 높이는 제목 생성")
+    if st.button("✨ 클릭률 최적화 제목 5개 생성", use_container_width=True, key="btn_title"):
+        if not topic or not keywords:
+            st.warning("주제와 키워드를 먼저 입력해주세요.")
+        else:
+            with st.spinner("숫자형·질문형·방법형·비교형·감성형 제목 생성 중..."):
+                st.session_state["titles"] = gen_seo_titles(topic, keywords)
+
+    if "titles" in st.session_state:
+        with st.expander("생성된 제목 5개 보기", expanded=True):
+            st.markdown(st.session_state["titles"])
+
+    selected_title = st.text_input(
+        "사용할 제목 선택 (위에서 복사하거나 직접 입력)",
+        placeholder="예: ETF 투자 처음이라면? 2026 배당 ETF 추천 TOP 7",
+        key="ct_title",
+    )
+
+    search_intent = st.selectbox(
+        "검색 의도",
+        ["정보형 (알고 싶어요)", "방법형 (어떻게 하나요)", "비교형 (뭐가 나은가요)", "구매형 (살 거예요)"],
+        key="ct_intent",
+    )
+
+    st.divider()
+
+    # ── Step 4: 완전한 글 생성
+    st.subheader("④ E-E-A-T 완전 반영 고품질 글 생성 (3,200자+)")
+
+    col_gen, col_info = st.columns([2, 1])
+    with col_info:
+        st.markdown("""
+**자동 포함 요소:**
+- 목차 (Table of Contents)
+- E-E-A-T 경험/전문성 문장
+- 검색 의도 맞춤 구조
+- 핵심 키워드 자연 삽입
+- 핵심 요약 bullet
+- CTA (댓글·구독 유도)
+- 해시태그 10~15개
+- 자연스러운 구어체
+""")
+    with col_gen:
+        if st.button(
+            "🚀 글 생성 시작 (3,200자 이상)",
+            type="primary",
+            use_container_width=True,
+            key="btn_article",
+        ):
+            if not topic or not niche or not keywords or not selected_title:
+                st.warning("분야 · 주제 · 키워드 · 제목을 모두 입력해주세요.")
+            else:
+                with st.spinner("E-E-A-T 고품질 글 작성 중... (약 1~2분)"):
+                    article = gen_quality_article(
+                        topic=topic,
+                        niche=niche,
+                        keywords=keywords,
+                        title=selected_title,
+                        search_intent=search_intent,
+                    )
+                    st.session_state["article"] = article
+
+    # ── 결과 출력
     if "article" in st.session_state:
         st.divider()
-        st.subheader("생성된 글")
         article = st.session_state["article"]
-        st.markdown(article)
-        word_count = len(article.split())
-        st.caption(f"단어 수: 약 {word_count:,}개")
-        st.download_button(
-            "글 다운로드 (.md)",
-            data=article,
-            file_name="article.md",
-            mime="text/markdown",
-            use_container_width=True,
-        )
+        char_count = len(article.replace(" ", ""))
+        char_total = len(article)
+
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            st.metric("총 글자 수 (공백 포함)", f"{char_total:,}자")
+        with col_m2:
+            st.metric("순 글자 수 (공백 제외)", f"{char_count:,}자")
+        with col_m3:
+            status = "✅ 충족" if char_total >= 3200 else "⚠️ 부족"
+            st.metric("3,200자 기준", status)
+
+        tab_preview, tab_raw = st.tabs(["📖 미리보기", "📝 마크다운 원본"])
+        with tab_preview:
+            st.markdown(article)
+        with tab_raw:
+            st.code(article, language="markdown")
+
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            st.download_button(
+                "📥 마크다운 다운로드 (.md)",
+                data=article,
+                file_name="article.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+        with col_dl2:
+            html_content = f"<html><head><meta charset='utf-8'><title>{selected_title}</title></head><body>{article}</body></html>"
+            st.download_button(
+                "📥 HTML 다운로드 (.html)",
+                data=html_content,
+                file_name="article.html",
+                mime="text/html",
+                use_container_width=True,
+            )
 
 
 def _tab_guide():
