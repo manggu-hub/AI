@@ -396,7 +396,7 @@ def ai_generate(prompt: str, temperature: float = 0.75) -> str:
         return "⚠️ GEMINI_API_KEY 환경변수가 설정되지 않았습니다."
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-1.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=temperature,
