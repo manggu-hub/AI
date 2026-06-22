@@ -15,8 +15,7 @@ from typing import Optional
 
 import streamlit as st
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -384,25 +383,19 @@ def _build_checks(r: SiteReport) -> list[CheckItem]:
 # ════════════════════════════════════════
 #  Gemini AI 콘텐츠 생성
 # ════════════════════════════════════════
-def _gemini_client():
-    if not API_KEY:
-        return None
-    return genai.Client(api_key=API_KEY)
-
-
 def ai_generate(prompt: str, temperature: float = 0.75) -> str:
-    client = _gemini_client()
-    if not client:
+    if not API_KEY:
         return "⚠️ GEMINI_API_KEY 환경변수가 설정되지 않았습니다."
     try:
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
+        genai.configure(api_key=API_KEY)
+        model = genai.GenerativeModel(
+            model_name="gemini-2.0-flash",
+            generation_config=genai.types.GenerationConfig(
                 temperature=temperature,
                 max_output_tokens=8192,
             ),
         )
+        response = model.generate_content(prompt)
         return response.text
     except Exception as e:
         return f"AI 생성 오류: {e}"
