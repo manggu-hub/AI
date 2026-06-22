@@ -26,6 +26,32 @@ MIN_WORD_COUNT = 300          # 페이지당 최소 단어 수
 MIN_ARTICLE_COUNT = 15        # 최소 게시글 수 (추정)
 MIN_CONTENT_PAGES = 5         # 필수 콘텐츠 페이지 수
 
+# ── YMYL(Your Money Your Life) 키워드 — 구글이 가장 엄격하게 심사하는 분야
+YMYL_MAP: dict[str, list[str]] = {
+    "금융/재테크": [
+        "주식", "투자", "etf", "펀드", "암호화폐", "코인", "비트코인", "이더리움",
+        "대출", "보험", "연금", "세금", "부동산", "청약", "재테크", "절세", "배당",
+    ],
+    "건강/의료": [
+        "질병", "증상", "치료", "약", "의약품", "다이어트", "수술", "병원",
+        "암", "당뇨", "고혈압", "우울증", "불면증", "영양제", "건강기능식품",
+    ],
+    "법률": [
+        "소송", "계약", "법률", "변호사", "이혼", "상속", "법적", "판결",
+        "민사", "형사", "고소", "고발",
+    ],
+    "뉴스/정치": ["대통령", "국회", "선거", "정치", "정부 정책"],
+}
+
+
+def detect_ymyl(text: str) -> tuple[bool, str]:
+    """텍스트에서 YMYL 카테고리 감지. (is_ymyl, category_name) 반환"""
+    lower = text.lower()
+    for category, keywords in YMYL_MAP.items():
+        if any(kw in lower for kw in keywords):
+            return True, category
+    return False, ""
+
 
 # ════════════════════════════════════════
 #  HTML 파싱 유틸
@@ -135,6 +161,7 @@ class SiteReport:
     img_count: int = 0
     img_without_alt: int = 0
     h1_count: int = 0
+    text_sample: str = ""
     error: str = ""
     checks: list[CheckItem] = field(default_factory=list)
 
@@ -216,6 +243,7 @@ def analyze_site(url: str) -> SiteReport:
     report.h1_count = parser.h1_count
     report.img_count = parser.img_count
     report.img_without_alt = parser.img_without_alt
+    report.text_sample = parser.full_text[:1000]
 
     # 내부 링크 수
     parsed = urllib.parse.urlparse(url)
@@ -295,6 +323,24 @@ def _build_checks(r: SiteReport) -> list[CheckItem]:
         f"내부 링크: {r.internal_links}개 (5개 이상 권장)",
         weight=1,
     )
+
+    # YMYL 감지 — 해당 분야면 추가 정책 페이지 필요
+    ymyl_detected, ymyl_cat = detect_ymyl(r.title + " " + r.text_sample)
+    if ymyl_detected:
+        has_disclaimer = (
+            "disclaimer" in r.text_sample.lower()
+            or "면책" in r.text_sample
+            or "참고용" in r.text_sample
+            or "전문가" in r.text_sample
+        )
+        add(
+            f"YMYL 면책조항 ({ymyl_cat})",
+            has_disclaimer,
+            f"'{ymyl_cat}' 분야는 구글이 최고 수준으로 심사합니다. "
+            "면책조항·전문가 검토 문구·출처 명시가 없으면 승인 거절 가능성↑",
+            weight=3,
+        )
+
     return checks
 
 
@@ -443,10 +489,30 @@ def gen_seo_titles(topic: str, keywords: str) -> str:
 
 
 # ── ④ E-E-A-T 완전 반영 고품질 글 생성 (3200자+)
-def gen_quality_article(topic: str, niche: str, keywords: str, title: str, search_intent: str) -> str:
+def gen_quality_article(
+    topic: str,
+    niche: str,
+    keywords: str,
+    title: str,
+    search_intent: str,
+    is_ymyl: bool = False,
+    ymyl_category: str = "",
+) -> str:
+    ymyl_block = ""
+    if is_ymyl:
+        ymyl_block = f"""
+【YMYL 필수 지침 — '{ymyl_category}' 분야】
+- 글 상단에 "이 글은 정보 제공 목적으로 작성되었으며, 전문가 상담을 대체하지 않습니다" 문구 삽입
+- 주요 수치·사실에는 출처(공식 기관, 보고서 등) 반드시 명시
+- 글 말미에 면책조항(Disclaimer) 섹션 별도 추가
+- 저자 소개란에 관련 자격·경력 언급 (간략하게)
+- 극단적 수익·효과 약속 문구 금지
+"""
+
     return ai_generate(f"""
 당신은 {niche} 분야의 10년 경력 전문 블로거입니다.
 구글 E-E-A-T(경험·전문성·권위성·신뢰성) 원칙을 완벽히 반영한 고품질 블로그 글을 작성해주세요.
+{ymyl_block}
 
 【기본 정보】
 - 제목: {title}
@@ -495,6 +561,181 @@ def gen_quality_article(topic: str, niche: str, keywords: str, title: str, searc
 
 마크다운 형식으로만 출력해주세요. (HTML 태그 금지)
 """, temperature=0.8)
+
+
+# ── sitemap.xml 자동 생성
+def gen_sitemap_xml(site_url: str, urls: list[str]) -> str:
+    from datetime import date
+    today = date.today().isoformat()
+    base = site_url.rstrip("/")
+    items = []
+    for raw in urls:
+        u = raw.strip()
+        if not u:
+            continue
+        if not u.startswith("http"):
+            u = base + "/" + u.lstrip("/")
+        items.append(f"""  <url>
+    <loc>{u}</loc>
+    <lastmod>{today}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>""")
+    # 홈페이지를 priority 1.0으로 맨 앞
+    home_entry = f"""  <url>
+    <loc>{base}/</loc>
+    <lastmod>{today}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>"""
+    body = home_entry + "\n" + "\n".join(items) if items else home_entry
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{body}
+</urlset>"""
+
+
+# ── robots.txt 자동 생성
+def gen_robots_txt(site_url: str) -> str:
+    base = site_url.rstrip("/")
+    return f"""User-agent: *
+Allow: /
+
+# 관리자·로그인 영역 차단
+Disallow: /admin/
+Disallow: /wp-admin/
+Disallow: /login/
+Disallow: /private/
+Disallow: /?s=
+Disallow: /search/
+Disallow: /tag/*/feed/
+Disallow: /comments/feed/
+
+# 이미지·미디어 허용
+Allow: /wp-content/uploads/
+
+# 사이트맵 위치
+Sitemap: {base}/sitemap.xml
+
+# 크롤 속도 (과부하 방지)
+Crawl-delay: 1
+"""
+
+
+# ── 글 품질 자동 채점
+def score_article(article: str, keywords: str) -> dict:
+    """생성된 글을 10개 기준으로 채점, 점수 dict 반환"""
+    scores = {}
+    text = article
+
+    # 1. 글자 수 (3200자 이상)
+    char_count = len(text)
+    scores["글자 수 (3,200자+)"] = (
+        (5 if char_count >= 3200 else (3 if char_count >= 2000 else 1)),
+        f"{char_count:,}자",
+        5,
+    )
+
+    # 2. 목차(TOC) 포함
+    has_toc = "목차" in text or "## 목차" in text or "# 목차" in text
+    scores["목차(TOC) 포함"] = (5 if has_toc else 0, "있음" if has_toc else "없음", 5)
+
+    # 3. H2 소제목 4개 이상
+    h2_count = text.count("\n## ")
+    scores["H2 소제목 (4개+)"] = (
+        (5 if h2_count >= 4 else (3 if h2_count >= 2 else 1)),
+        f"{h2_count}개",
+        5,
+    )
+
+    # 4. H3 소제목 4개 이상
+    h3_count = text.count("\n### ")
+    scores["H3 소제목 (4개+)"] = (
+        (5 if h3_count >= 4 else (3 if h3_count >= 2 else 1)),
+        f"{h3_count}개",
+        5,
+    )
+
+    # 5. E-E-A-T 신호 (경험·전문 관련 어휘)
+    eeat_words = ["경험", "전문", "실제로", "직접", "해보니", "추천", "전문가", "연구", "통계", "출처"]
+    eeat_found = [w for w in eeat_words if w in text]
+    scores["E-E-A-T 신호어"] = (
+        (5 if len(eeat_found) >= 5 else (3 if len(eeat_found) >= 2 else 1)),
+        f"{len(eeat_found)}개 감지: {', '.join(eeat_found[:4])}",
+        5,
+    )
+
+    # 6. CTA 포함
+    cta_words = ["댓글", "구독", "공유", "북마크", "알림", "팔로우", "저장"]
+    has_cta = any(w in text for w in cta_words)
+    scores["CTA 포함"] = (5 if has_cta else 0, "있음" if has_cta else "없음", 5)
+
+    # 7. 해시태그 포함
+    hashtag_count = len(re.findall(r"#\S+", text))
+    scores["해시태그 (10개+)"] = (
+        (5 if hashtag_count >= 10 else (3 if hashtag_count >= 5 else 1)),
+        f"{hashtag_count}개",
+        5,
+    )
+
+    # 8. 핵심 키워드 밀도 (3~8회 — 과도하면 패널티)
+    if keywords:
+        main_kw = keywords.split(",")[0].strip()
+        kw_count = text.lower().count(main_kw.lower())
+        density_ok = 3 <= kw_count <= 8
+        scores["키워드 밀도 (3~8회)"] = (
+            (5 if density_ok else (2 if kw_count > 0 else 0)),
+            f"'{main_kw}' {kw_count}회 등장",
+            5,
+        )
+    else:
+        scores["키워드 밀도 (3~8회)"] = (3, "키워드 미입력", 5)
+
+    # 9. 요약/정리 섹션
+    summary_words = ["요약", "정리", "마무리", "핵심", "결론"]
+    has_summary = any(w in text for w in summary_words)
+    scores["핵심 요약 섹션"] = (5 if has_summary else 0, "있음" if has_summary else "없음", 5)
+
+    # 10. 자연스러운 구어체
+    colloquial = ["솔직히", "사실은", "여러분", "저도", "해보니", "정말", "실제로", "그래서"]
+    col_found = [w for w in colloquial if w in text]
+    scores["자연스러운 문체"] = (
+        (5 if len(col_found) >= 4 else (3 if len(col_found) >= 2 else 1)),
+        f"구어체 표현 {len(col_found)}개 감지",
+        5,
+    )
+
+    return scores
+
+
+def _render_article_score(scores: dict) -> None:
+    """채점 결과를 Streamlit으로 렌더링"""
+    total = sum(v[0] for v in scores.values())
+    max_total = sum(v[2] for v in scores.values())
+    pct = int(total / max_total * 100)
+
+    color = "#2ecc71" if pct >= 80 else ("#f39c12" if pct >= 60 else "#e74c3c")
+    grade = "A (우수)" if pct >= 80 else ("B (보통)" if pct >= 60 else "C (개선 필요)")
+
+    st.markdown(f"""
+    <div style="background:#f8f9fa;border-radius:12px;padding:16px;margin-bottom:12px">
+      <div style="font-size:14px;color:#666;margin-bottom:4px">글 품질 점수</div>
+      <div style="font-size:36px;font-weight:bold;color:{color}">{pct}점 &nbsp;<span style="font-size:18px">{grade}</span></div>
+      <div style="background:#ddd;border-radius:6px;height:12px;margin-top:8px">
+        <div style="background:{color};width:{pct}%;height:12px;border-radius:6px"></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    cols = st.columns(2)
+    for i, (name, (score, detail, max_s)) in enumerate(scores.items()):
+        icon = "✅" if score == max_s else ("⚠️" if score > 0 else "❌")
+        with cols[i % 2]:
+            st.markdown(
+                f"**{icon} {name}**  \n"
+                f"<span style='color:#888;font-size:12px'>{detail} ({score}/{max_s})</span>",
+                unsafe_allow_html=True,
+            )
 
 
 def gen_improvement_plan(report: SiteReport) -> str:
@@ -687,6 +928,63 @@ HTML 형식으로, 신뢰감 있고 친근한 톤으로 작성해주세요.
                 use_container_width=True,
             )
 
+    # ── sitemap.xml / robots.txt 자동 생성
+    st.divider()
+    st.subheader("🗺️ sitemap.xml + robots.txt 자동 생성")
+    st.caption("사이트 분석에서 누락됐던 두 파일을 바로 생성해 서버에 올리세요.")
+
+    pg_site_url = st.text_input(
+        "사이트 URL (sitemap용)",
+        placeholder="https://yourblog.com",
+        key="pg_site_url",
+    )
+    pg_extra_urls = st.text_area(
+        "추가 페이지 URL (줄바꿈으로 구분, 상대경로 가능)",
+        placeholder="/about\n/contact\n/privacy-policy\n/posts/article-1\n/posts/article-2",
+        height=120,
+        key="pg_extra_urls",
+    )
+
+    col_sm, col_rb = st.columns(2)
+    with col_sm:
+        if st.button("🗺️ sitemap.xml 생성", use_container_width=True):
+            if not pg_site_url:
+                st.warning("사이트 URL을 입력해주세요.")
+            else:
+                extra = [u for u in pg_extra_urls.splitlines() if u.strip()]
+                xml = gen_sitemap_xml(pg_site_url, extra)
+                st.session_state["sitemap_xml"] = xml
+
+    with col_rb:
+        if st.button("🤖 robots.txt 생성", use_container_width=True):
+            if not pg_site_url:
+                st.warning("사이트 URL을 입력해주세요.")
+            else:
+                txt = gen_robots_txt(pg_site_url)
+                st.session_state["robots_txt"] = txt
+
+    if "sitemap_xml" in st.session_state:
+        st.markdown("**sitemap.xml** — 루트 디렉토리(`/sitemap.xml`)에 업로드하세요")
+        st.code(st.session_state["sitemap_xml"], language="xml")
+        st.download_button(
+            "📥 sitemap.xml 다운로드",
+            data=st.session_state["sitemap_xml"],
+            file_name="sitemap.xml",
+            mime="application/xml",
+            use_container_width=True,
+        )
+
+    if "robots_txt" in st.session_state:
+        st.markdown("**robots.txt** — 루트 디렉토리(`/robots.txt`)에 업로드하세요")
+        st.code(st.session_state["robots_txt"], language="nginx")
+        st.download_button(
+            "📥 robots.txt 다운로드",
+            data=st.session_state["robots_txt"],
+            file_name="robots.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+
 
 def _tab_content():
     st.header("✍️ E-E-A-T 고품질 콘텐츠 생성")
@@ -721,6 +1019,20 @@ def _tab_content():
         placeholder="예: 2026 ETF 투자 완전 정복",
         key="ct_topic",
     )
+
+    # YMYL 실시간 경고
+    if topic or niche:
+        is_ymyl, ymyl_cat = detect_ymyl((topic or "") + " " + (niche or ""))
+        if is_ymyl:
+            st.warning(
+                f"⚠️ **YMYL 주제 감지: {ymyl_cat}**\n\n"
+                "구글은 이 분야를 **최고 수준**으로 심사합니다. 승인받으려면 아래를 반드시 지키세요:\n"
+                "- 글 말미에 **면책조항** 필수 (\"본 글은 참고용이며 전문가 상담을 권장합니다\")\n"
+                "- **출처·근거 자료** 명시 (공식 통계, 기관 링크)\n"
+                "- **저자 전문성** 소개 (자격증, 경력 등)\n"
+                "- 개인정보처리방침에 **YMYL 면책 조항** 추가\n\n"
+                "→ 글 생성 시 이 내용이 자동으로 반영됩니다."
+            )
 
     st.divider()
 
@@ -798,6 +1110,7 @@ def _tab_content():
             if not topic or not niche or not keywords or not selected_title:
                 st.warning("분야 · 주제 · 키워드 · 제목을 모두 입력해주세요.")
             else:
+                is_ymyl, ymyl_cat = detect_ymyl(topic + " " + niche)
                 with st.spinner("E-E-A-T 고품질 글 작성 중... (약 1~2분)"):
                     article = gen_quality_article(
                         topic=topic,
@@ -805,21 +1118,33 @@ def _tab_content():
                         keywords=keywords,
                         title=selected_title,
                         search_intent=search_intent,
+                        is_ymyl=is_ymyl,
+                        ymyl_category=ymyl_cat,
                     )
                     st.session_state["article"] = article
+                    st.session_state["article_kw"] = keywords
 
     # ── 결과 출력
     if "article" in st.session_state:
         st.divider()
         article = st.session_state["article"]
-        char_count = len(article.replace(" ", ""))
+        saved_kw = st.session_state.get("article_kw", keywords)
+
+        # 품질 자동 채점
+        st.subheader("⑤ 글 품질 자동 채점")
+        scores = score_article(article, saved_kw)
+        _render_article_score(scores)
+
+        st.divider()
+
         char_total = len(article)
+        char_no_space = len(article.replace(" ", ""))
 
         col_m1, col_m2, col_m3 = st.columns(3)
         with col_m1:
             st.metric("총 글자 수 (공백 포함)", f"{char_total:,}자")
         with col_m2:
-            st.metric("순 글자 수 (공백 제외)", f"{char_count:,}자")
+            st.metric("순 글자 수 (공백 제외)", f"{char_no_space:,}자")
         with col_m3:
             status = "✅ 충족" if char_total >= 3200 else "⚠️ 부족"
             st.metric("3,200자 기준", status)
@@ -830,6 +1155,7 @@ def _tab_content():
         with tab_raw:
             st.code(article, language="markdown")
 
+        safe_title = st.session_state.get("ct_title", "article")
         col_dl1, col_dl2 = st.columns(2)
         with col_dl1:
             st.download_button(
@@ -840,7 +1166,11 @@ def _tab_content():
                 use_container_width=True,
             )
         with col_dl2:
-            html_content = f"<html><head><meta charset='utf-8'><title>{selected_title}</title></head><body>{article}</body></html>"
+            html_content = (
+                f"<html><head><meta charset='utf-8'>"
+                f"<title>{safe_title}</title></head>"
+                f"<body>{article}</body></html>"
+            )
             st.download_button(
                 "📥 HTML 다운로드 (.html)",
                 data=html_content,
