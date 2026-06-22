@@ -738,6 +738,134 @@ def _render_article_score(scores: dict) -> None:
             )
 
 
+# ── 면책조항(Disclaimer) 페이지 생성
+def gen_disclaimer(site_name: str, niche: str, contact_email: str) -> str:
+    is_ymyl, ymyl_cat = detect_ymyl(niche)
+    ymyl_note = f"특히 이 사이트는 '{ymyl_cat}' 관련 정보를 다루므로 관련 법적 면책 내용을 상세히 포함해주세요." if is_ymyl else ""
+    return ai_generate(f"""
+'{site_name}' 사이트의 면책조항(Disclaimer) 페이지를 작성해주세요.
+한국어 HTML 형식으로, 구글 애드센스 심사 기준과 국내 법률에 맞게 작성해주세요.
+{ymyl_note}
+
+- 사이트명: {site_name}
+- 분야: {niche}
+- 연락처: {contact_email}
+
+반드시 포함할 내용:
+1. 정보 제공 목적 명시 (전문가 조언 대체 불가)
+2. 정확성 보장 불가 면책
+3. 외부 링크 책임 면제
+4. 수익 보장 불가 (수익 관련 콘텐츠일 경우)
+5. 저작권 안내
+6. 면책조항 변경 권리 유보
+7. 문의처
+
+HTML 태그 포함하여 완성된 콘텐츠만 출력해주세요.
+""")
+
+
+# ── 저자 Bio 페이지 생성
+def gen_author_bio(site_name: str, niche: str, author_name: str, expertise: str) -> str:
+    return ai_generate(f"""
+구글 E-E-A-T(경험·전문성·권위성·신뢰성) 기준에 최적화된 저자 소개(Author Bio) 페이지를 작성해주세요.
+한국어 HTML 형식으로 작성해주세요.
+
+- 사이트명: {site_name}
+- 분야: {niche}
+- 저자명/닉네임: {author_name}
+- 전문성/경력: {expertise}
+
+반드시 포함할 내용:
+1. 저자 소개 헤더 (이름, 직함/역할)
+2. 전문성 증명 (경력, 자격, 경험 연수 등)
+3. 이 블로그를 운영하는 이유 (동기·가치관)
+4. 독자에게 제공할 수 있는 가치
+5. 주요 작성 주제 목록
+6. 연락처 또는 SNS 링크 (플레이스홀더)
+7. E-E-A-T 신뢰 배지 텍스트 (예: "XX년 경력", "실제 경험 기반")
+
+전문적이고 신뢰감 있게, 그러나 친근한 톤으로 작성해주세요.
+HTML 태그 포함하여 완성된 콘텐츠만 출력해주세요.
+""")
+
+
+# ── 콘텐츠 캘린더 AI 생성
+def gen_content_calendar(niche: str, start_date: str, weeks: int, per_week: int) -> str:
+    total = weeks * per_week
+    return ai_generate(f"""
+'{niche}' 블로그의 {weeks}주치 콘텐츠 발행 캘린더를 만들어주세요.
+
+- 시작일: {start_date}
+- 주당 발행 횟수: {per_week}회
+- 총 글 수: {total}개
+
+다음 형식의 마크다운 표로 작성해주세요:
+
+| 주차 | 발행일 | 글 제목 (안) | 키워드 | 검색 의도 | 예상 소요 시간 |
+
+조건:
+- AdSense 승인에 유리한 정보형/방법형 주제 위주
+- 주제가 겹치지 않게 다양하게
+- 초반(1~2주): 기초/입문 주제 → 후반: 심화/비교 주제 순서
+- 글 제목은 CTR 높게 (숫자, 질문, "하는 법" 등 포함)
+- 각 글은 구글 검색자가 실제로 검색할 법한 키워드 기반
+
+한국어로 작성해주세요.
+""", temperature=0.7)
+
+
+# ── 승인 타이밍 점수 계산 (AI 불필요, 순수 로직)
+def calc_timing_score(
+    article_count: int,
+    domain_months: int,
+    monthly_visitors: int,
+    has_https: bool,
+    has_custom_domain: bool,
+    completed_pages: list[str],
+) -> dict:
+    scores = {}
+
+    # 게시글 수 (30점)
+    art_score = min(article_count / 15 * 30, 30)
+    scores["게시글 수"] = (round(art_score), 30, f"{article_count}개 (목표 15개+)")
+
+    # 도메인 나이 (20점)
+    dom_score = min(domain_months / 6 * 20, 20)
+    scores["도메인 나이"] = (round(dom_score), 20, f"{domain_months}개월 (권장 6개월+)")
+
+    # 필수 페이지 (25점, 5종 각 5점)
+    page_items = ["개인정보처리방침", "소개(About)", "연락처(Contact)", "sitemap.xml", "robots.txt"]
+    done = [p for p in page_items if p in completed_pages]
+    page_score = len(done) * 5
+    scores["필수 페이지"] = (page_score, 25, f"{len(done)}/5개 완료")
+
+    # HTTPS (10점)
+    scores["HTTPS"] = (10 if has_https else 0, 10, "적용됨" if has_https else "미적용")
+
+    # 커스텀 도메인 (10점)
+    scores["커스텀 도메인"] = (10 if has_custom_domain else 0, 10, "사용 중" if has_custom_domain else "미사용 (무료 서브도메인)")
+
+    # 방문자 수 (5점)
+    vis_score = 5 if monthly_visitors >= 100 else (3 if monthly_visitors >= 50 else (1 if monthly_visitors > 0 else 0))
+    scores["월 방문자"] = (vis_score, 5, f"{monthly_visitors:,}명/월 (50명+ 권장)")
+
+    total = sum(v[0] for v in scores.values())
+    max_total = sum(v[1] for v in scores.values())
+    return {"items": scores, "total": total, "max": max_total}
+
+
+def timing_verdict(total: int) -> tuple[str, str, str]:
+    """(판정, 이모지, 조언) 반환"""
+    if total >= 80:
+        return "지금 바로 신청하세요!", "🟢", "모든 준비가 충분합니다. AdSense 신청 페이지로 이동하세요."
+    elif total >= 65:
+        return "1~2주 내 신청 가능", "🟡", "게시글을 조금 더 추가하거나 미완성 페이지를 마무리하면 바로 신청 가능합니다."
+    elif total >= 45:
+        return "2~4주 더 준비하세요", "🟠", "필수 페이지 완성 + 게시글 추가가 우선입니다. 서두르면 거절될 수 있어요."
+    else:
+        return "아직 이릅니다", "🔴", "기본 요건이 충족되지 않았습니다. 게시글 작성과 필수 페이지 완성부터 시작하세요."
+
+
 def gen_improvement_plan(report: SiteReport) -> str:
     failed = [c for c in report.checks if not c.passed]
     failed_str = "\n".join(f"- {c.name}: {c.detail}" for c in failed)
@@ -774,25 +902,165 @@ def main():
     st.title("💰 구글 애드센스 승인 도우미")
     st.caption("사이트 분석 → 체크리스트 → AI 콘텐츠 생성으로 한번에 승인!")
 
-    tab_analyze, tab_pages, tab_content, tab_guide = st.tabs(
-        ["🔍 사이트 분석", "📄 필수 페이지 생성", "✍️ 콘텐츠 생성", "📋 승인 가이드"]
+    tab_analyze, tab_dashboard, tab_pages, tab_content, tab_guide = st.tabs(
+        ["🔍 사이트 분석", "📊 승인 준비 대시보드", "📄 필수 페이지 생성", "✍️ 콘텐츠 생성", "📋 승인 가이드"]
     )
 
-    # ── Tab 1: 사이트 분석
     with tab_analyze:
         _tab_analyze()
 
-    # ── Tab 2: 필수 페이지 생성
+    with tab_dashboard:
+        _tab_dashboard()
+
     with tab_pages:
         _tab_pages()
 
-    # ── Tab 3: 콘텐츠 생성
     with tab_content:
         _tab_content()
 
-    # ── Tab 4: 승인 가이드
     with tab_guide:
         _tab_guide()
+
+
+def _tab_dashboard():
+    st.header("📊 승인 준비 대시보드")
+    st.caption("신청 타이밍 계산 · 포스팅 현황 트래커 · 콘텐츠 캘린더를 한 곳에서 관리하세요.")
+
+    # ════ 섹션 1: 승인 신청 타이밍 계산기 ════
+    st.subheader("① 승인 신청 타이밍 계산기")
+    st.info("현재 상태를 입력하면 지금 신청해도 될지 즉시 판단해드립니다.")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        article_count   = st.number_input("현재 게시글 수", min_value=0, max_value=500, value=0, step=1)
+        domain_months   = st.number_input("도메인 나이 (개월)", min_value=0, max_value=120, value=0, step=1)
+        monthly_visitors = st.number_input("월 방문자 수 (추정)", min_value=0, max_value=100000, value=0, step=10)
+
+    with col_b:
+        has_https        = st.checkbox("HTTPS 적용됨", value=False)
+        has_custom_domain = st.checkbox("커스텀 도메인 사용 중 (무료 서브도메인 아님)", value=False)
+        completed_pages  = st.multiselect(
+            "완성된 필수 페이지",
+            ["개인정보처리방침", "소개(About)", "연락처(Contact)", "sitemap.xml", "robots.txt"],
+        )
+
+    if st.button("🧮 지금 신청해도 될까? 계산하기", type="primary", use_container_width=True):
+        result = calc_timing_score(
+            article_count, domain_months, monthly_visitors,
+            has_https, has_custom_domain, completed_pages,
+        )
+        verdict, v_icon, advice = timing_verdict(result["total"])
+        total, max_s = result["total"], result["max"]
+        pct = int(total / max_s * 100)
+        color = "#2ecc71" if pct >= 80 else ("#f39c12" if pct >= 65 else ("#e67e22" if pct >= 45 else "#e74c3c"))
+
+        st.markdown(f"""
+        <div style="background:#f8f9fa;border-radius:12px;padding:20px;margin:12px 0">
+          <div style="font-size:13px;color:#666">신청 준비 점수</div>
+          <div style="font-size:42px;font-weight:bold;color:{color}">{total}/{max_s}점 &nbsp;
+            <span style="font-size:20px">{v_icon} {verdict}</span>
+          </div>
+          <div style="background:#ddd;border-radius:6px;height:14px;margin:10px 0">
+            <div style="background:{color};width:{pct}%;height:14px;border-radius:6px"></div>
+          </div>
+          <div style="color:#444;margin-top:8px">💡 {advice}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("**항목별 상세 점수**")
+        cols = st.columns(3)
+        for i, (name, (score, max_item, detail)) in enumerate(result["items"].items()):
+            icon = "✅" if score == max_item else ("⚠️" if score > 0 else "❌")
+            with cols[i % 3]:
+                st.markdown(
+                    f"**{icon} {name}**  \n"
+                    f"<span style='font-size:12px;color:#888'>{detail} ({score}/{max_item}점)</span>",
+                    unsafe_allow_html=True,
+                )
+
+    st.divider()
+
+    # ════ 섹션 2: 포스팅 현황 트래커 ════
+    st.subheader("② 포스팅 현황 트래커")
+
+    col_t1, col_t2, col_t3 = st.columns(3)
+    with col_t1:
+        current_posts = st.number_input("현재 게시글 수", min_value=0, max_value=500, value=0, step=1, key="tr_cur")
+    with col_t2:
+        target_posts  = st.number_input("목표 게시글 수", min_value=1, max_value=200, value=20, step=1, key="tr_tgt")
+    with col_t3:
+        posts_per_week = st.number_input("주당 발행 계획", min_value=1, max_value=14, value=3, step=1, key="tr_pw")
+
+    remaining = max(target_posts - current_posts, 0)
+    pct_done  = min(int(current_posts / target_posts * 100), 100)
+    weeks_left = -(-remaining // posts_per_week)  # ceiling division
+    from datetime import date, timedelta
+    eta = date.today() + timedelta(weeks=weeks_left)
+
+    bar_color = "#2ecc71" if pct_done >= 100 else ("#f39c12" if pct_done >= 60 else "#3498db")
+    st.markdown(f"""
+    <div style="background:#f8f9fa;border-radius:12px;padding:16px;margin:12px 0">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-weight:bold">진행률</span>
+        <span style="color:{bar_color};font-weight:bold">{pct_done}%</span>
+      </div>
+      <div style="background:#ddd;border-radius:6px;height:18px">
+        <div style="background:{bar_color};width:{pct_done}%;height:18px;border-radius:6px"></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("완료", f"{current_posts}개")
+    m2.metric("남은 글", f"{remaining}개")
+    m3.metric("주당 목표", f"{posts_per_week}개")
+    m4.metric("예상 완료일", eta.strftime("%m월 %d일") if remaining > 0 else "완료! 🎉")
+
+    if pct_done >= 100:
+        st.success("🎉 목표 달성! 필수 페이지 완성 후 AdSense 신청을 진행하세요.")
+    elif pct_done >= 75:
+        st.info(f"거의 다 왔어요! {remaining}개만 더 쓰면 신청 가능합니다.")
+    else:
+        st.warning(f"아직 {remaining}개가 필요합니다. 주당 {posts_per_week}개씩 작성하면 {weeks_left}주 후 완료됩니다.")
+
+    st.divider()
+
+    # ════ 섹션 3: 콘텐츠 캘린더 생성 ════
+    st.subheader("③ AI 콘텐츠 캘린더 생성")
+    st.caption("주제·발행 주기를 입력하면 날짜별 글 주제를 자동으로 배정합니다.")
+
+    col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+    with col_c1:
+        cal_niche = st.text_input("블로그 분야", placeholder="예: 재테크", key="cal_niche")
+    with col_c2:
+        cal_start = st.date_input("시작일", value=date.today(), key="cal_start")
+    with col_c3:
+        cal_weeks = st.number_input("계획 기간 (주)", min_value=2, max_value=12, value=4, step=1, key="cal_weeks")
+    with col_c4:
+        cal_freq = st.number_input("주당 발행 횟수", min_value=1, max_value=7, value=3, step=1, key="cal_freq")
+
+    if st.button("📅 콘텐츠 캘린더 생성", use_container_width=True, type="primary", key="btn_calendar"):
+        if not cal_niche:
+            st.warning("블로그 분야를 입력해주세요.")
+        else:
+            with st.spinner(f"{cal_weeks}주 · 총 {cal_weeks * cal_freq}개 주제 생성 중..."):
+                calendar = gen_content_calendar(
+                    niche=cal_niche,
+                    start_date=cal_start.strftime("%Y년 %m월 %d일"),
+                    weeks=cal_weeks,
+                    per_week=cal_freq,
+                )
+                st.session_state["calendar_result"] = calendar
+
+    if "calendar_result" in st.session_state:
+        st.markdown(st.session_state["calendar_result"])
+        st.download_button(
+            "📥 캘린더 다운로드 (.md)",
+            data=st.session_state["calendar_result"],
+            file_name="content_calendar.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
 
 
 def _tab_analyze():
@@ -910,10 +1178,35 @@ HTML 형식으로, 신뢰감 있고 친근한 톤으로 작성해주세요.
                     result = ai_generate(prompt)
                     st.session_state["contact_result"] = result
 
+    # 4·5번째 버튼 — 면책조항 + 저자 Bio
+    st.divider()
+    col4, col5 = st.columns(2)
+    with col4:
+        if st.button("⚠️ 면책조항(Disclaimer) 생성", use_container_width=True):
+            if not site_name or not contact_email:
+                st.warning("사이트 이름과 이메일을 입력해주세요.")
+            else:
+                with st.spinner("면책조항 작성 중... (YMYL 분야 자동 감지)"):
+                    result = gen_disclaimer(site_name, niche or "일반", contact_email)
+                    st.session_state["disclaimer_result"] = result
+
+    with col5:
+        author_name = st.text_input("저자명/닉네임", placeholder="예: 머니메이커 김철수", key="pg_author")
+        expertise   = st.text_input("전문성/경력", placeholder="예: 10년차 재테크 투자자, 경제학 전공", key="pg_expertise")
+        if st.button("✍️ 저자 Bio 페이지 생성", use_container_width=True):
+            if not site_name or not niche:
+                st.warning("사이트 이름과 분야를 입력해주세요.")
+            else:
+                with st.spinner("E-E-A-T 최적화 저자 소개 페이지 작성 중..."):
+                    result = gen_author_bio(site_name, niche, author_name or "운영자", expertise or "해당 분야 전문 블로거")
+                    st.session_state["author_bio_result"] = result
+
     for key, title in [
         ("privacy_result", "🔒 개인정보처리방침"),
         ("about_result", "👤 소개 페이지"),
         ("contact_result", "📧 연락처 페이지"),
+        ("disclaimer_result", "⚠️ 면책조항(Disclaimer)"),
+        ("author_bio_result", "✍️ 저자 Bio 페이지"),
     ]:
         if key in st.session_state:
             st.divider()
