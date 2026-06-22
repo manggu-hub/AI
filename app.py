@@ -201,7 +201,73 @@ DEFAULT_CHARACTER = {
                    "가볍게 농담도 하지만 챙길 일은 확실히 챙겨주는 든든한 스타일.",
     "speech": "친근한 반말을 기본으로, 너무 가볍지 않게. 응원과 격려를 자주 해준다.",
     "emoji_use": True,
+    "avatar_type": "image",      # "image"(일러스트 그림) | "emoji"
+    "avatar_seed": "하루",
 }
+
+_AVATAR_BG_COLORS = ["#b6e3f4", "#c0aede", "#d1d4f9", "#ffd5dc", "#ffdfbf",
+                     "#c8f7d4", "#fdf3c0", "#bfe3ff"]
+
+
+@st.cache_data(show_spinner=False)
+def generate_avatar_svg(seed: str, gender: str = "") -> str:
+    """python-avatars로 오프라인 일러스트 캐릭터 SVG 생성.
+
+    네트워크/API 키 불필요. seed가 같으면 항상 같은 얼굴(결정적).
+    성별에 따라 헤어·수염을 다르게 고른다.
+    """
+    import random as _r
+    import python_avatars as pa
+
+    rng = _r.Random(f"{seed}|{gender}")
+
+    def pick(enum, exclude=()):
+        opts = [getattr(enum, a) for a in dir(enum) if a.isupper() and a not in exclude]
+        return rng.choice(opts)
+
+    if gender == "남성":
+        hair = rng.choice([
+            pa.HairType.SHORT_FLAT, pa.HairType.SHORT_WAVED, pa.HairType.SHORT_CURLY,
+            pa.HairType.SHORT_ROUND, pa.HairType.CAESAR, pa.HairType.POMPADOUR,
+            pa.HairType.QUIFF, pa.HairType.BUZZCUT,
+        ])
+        facial = rng.choice([
+            pa.FacialHairType.NONE, pa.FacialHairType.NONE,
+            pa.FacialHairType.BEARD_LIGHT, pa.FacialHairType.BEARD_MEDIUM,
+        ])
+    elif gender == "여성":
+        hair = rng.choice([
+            pa.HairType.LONG_NOT_TOO_LONG, pa.HairType.STRAIGHT_1, pa.HairType.STRAIGHT_2,
+            pa.HairType.CURLY, pa.HairType.BOB, pa.HairType.BUN, pa.HairType.LONG_HAIR_CURLY,
+        ])
+        facial = pa.FacialHairType.NONE
+    else:
+        hair = pick(pa.HairType, exclude=("NONE", "HAT", "ASTRONAUT"))
+        facial = rng.choice([pa.FacialHairType.NONE] * 4 + [pa.FacialHairType.BEARD_LIGHT])
+
+    accessory = rng.choice(
+        [pa.AccessoryType.NONE] * 5
+        + [pa.AccessoryType.ROUND, pa.AccessoryType.PRESCRIPTION_2, pa.AccessoryType.SUNGLASSES]
+    )
+    # 너무 나이 들어 보이지 않도록 백발/은발은 제외
+    _hair_color = pick(pa.HairColor, exclude=("PLATINUM", "SILVER_GRAY", "PASTEL_PINK"))
+    avatar = pa.Avatar(
+        style=pa.AvatarStyle.CIRCLE,
+        background_color=rng.choice(_AVATAR_BG_COLORS),
+        top=hair,
+        hair_color=_hair_color,
+        eyebrows=pick(pa.EyebrowType, exclude=("ANGRY", "ANGRY_NATURAL", "NONE")),
+        eyes=rng.choice([pa.EyeType.DEFAULT, pa.EyeType.HAPPY]),
+        nose=pa.NoseType.DEFAULT,
+        mouth=rng.choice([pa.MouthType.SMILE, pa.MouthType.BIG_SMILE, pa.MouthType.TWINKLE]),
+        facial_hair=facial,
+        facial_hair_color=_hair_color,
+        skin_color=pick(pa.SkinColor, exclude=("YELLOW",)),
+        accessory=accessory,
+        clothing=pick(pa.ClothingType, exclude=("ASTRONAUT_SUIT",)),
+        clothing_color=pick(pa.ClothingColor),
+    )
+    return avatar.render()
 
 
 def load_character() -> dict:
@@ -232,11 +298,22 @@ def character_persona_text(char: dict) -> str:
     return "\n".join(lines)
 
 
+def character_avatar_svg(char: dict) -> str:
+    """캐릭터 설정으로 일러스트 SVG 생성."""
+    return generate_avatar_svg(
+        char.get("avatar_seed") or char.get("name", "ai"),
+        char.get("gender", ""),
+    )
+
+
 def chat_avatar(role: str, char: dict):
-    """채팅 말풍선에 쓸 아바타(어시스턴트는 캐릭터 이모지)."""
-    if role == "assistant":
-        return char.get("emoji") or "🤖"
-    return None
+    """채팅 말풍선 아바타. 어시스턴트는 캐릭터 그림(또는 이모지)."""
+    if role != "assistant":
+        return None
+    if char.get("avatar_type") == "image":
+        # Streamlit은 raw SVG 문자열을 이미지로 렌더링한다 (네트워크 불필요)
+        return character_avatar_svg(char)
+    return char.get("emoji") or "🤖"
 
 
 # ─── 채팅 기록 ───
@@ -2779,27 +2856,53 @@ elif page == "💬 채팅":
 # ════════════════════════════════════════
 elif page == "🧑‍🎤 내 캐릭터":
     st.title("🧑‍🎤 내 캐릭터")
-    st.caption("나만의 버츄얼 AI 캐릭터를 만들어요. 여기서 정한 이름·성격·말투가 채팅 비서에 그대로 적용돼요.")
+    st.caption("나만의 버츄얼 AI 캐릭터를 만들어요. 캐릭터 그림은 무료 오프라인 일러스트로 만들어지고, "
+               "정한 이름·성격·말투는 채팅 비서에 그대로 적용돼요.")
     st.write("")
 
-    char = load_character()
+    _cur = load_character()
+    # 위젯 상태 초기화 (세션에 한 번만 세팅 → 라이브 미리보기 가능)
+    _defaults = {
+        "cc_name": _cur["name"], "cc_emoji": _cur["emoji"], "cc_gender": _cur["gender"],
+        "cc_vibe": _cur["vibe"], "cc_personality": _cur["personality"],
+        "cc_speech": _cur["speech"], "cc_emoji_use": _cur["emoji_use"],
+        "cc_atype": _cur.get("avatar_type", "image"),
+        "cc_seed": _cur.get("avatar_seed") or _cur["name"],
+    }
+    for _k, _v in _defaults.items():
+        st.session_state.setdefault(_k, _v)
 
-    # ── 미리보기 카드
-    pv = st.session_state.get("char_preview", char)
-    st.markdown(
-        f"""
-        <div style="border:1px solid #e0e0e0;border-radius:16px;padding:22px;
-                    text-align:center;background:linear-gradient(135deg,#f7f8fc,#eef2ff);">
-            <div style="font-size:64px;line-height:1;">{pv.get('emoji','😎')}</div>
-            <div style="font-size:1.4rem;font-weight:700;margin-top:8px;">{pv.get('name','이름 없음')}</div>
-            <div style="color:#787774;margin-top:2px;">{pv.get('gender','')} · {pv.get('vibe','')}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    def _apply_preset(data: dict):
+        for kk, vv in data.items():
+            st.session_state[f"cc_{kk}"] = vv
+
+    # ── 미리보기 카드 (현재 위젯 값 기준 실시간)
+    _atype = st.session_state.cc_atype
+    with st.container(border=True):
+        _pc = st.columns([1, 1.1, 1])
+        with _pc[1]:
+            if _atype == "image":
+                _svg = generate_avatar_svg(
+                    st.session_state.cc_seed or st.session_state.cc_name,
+                    st.session_state.cc_gender,
+                )
+                st.image(_svg, use_container_width=True)
+            else:
+                st.markdown(
+                    f"<div style='font-size:96px;text-align:center;line-height:1.1;'>"
+                    f"{st.session_state.cc_emoji}</div>",
+                    unsafe_allow_html=True,
+                )
+        st.markdown(
+            f"<div style='text-align:center;font-size:1.4rem;font-weight:700;'>"
+            f"{st.session_state.cc_name or '이름 없음'}</div>"
+            f"<div style='text-align:center;color:#787774;margin-top:2px;'>"
+            f"{st.session_state.cc_gender} · {st.session_state.cc_vibe}</div>",
+            unsafe_allow_html=True,
+        )
     st.write("")
 
-    # ── 프리셋 (빠른 시작)
+    # ── 프리셋 (성격/말투 + 어울리는 그림)
     st.markdown("**⚡ 빠른 프리셋**")
     PRESETS = {
         "😎 시원한 남사친": {
@@ -2807,80 +2910,95 @@ elif page == "🧑‍🎤 내 캐릭터":
             "personality": "밝고 긍정적이며 시원시원하게 말하는 친구 같은 비서. "
                            "가볍게 농담도 하지만 챙길 일은 확실히 챙겨주는 든든한 스타일.",
             "speech": "친근한 반말을 기본으로, 너무 가볍지 않게. 응원과 격려를 자주 해준다.",
-            "emoji_use": True,
+            "emoji_use": True, "atype": "image", "seed": "Haru",
         },
         "🌸 다정한 여비서": {
             "name": "별이", "emoji": "🌸", "gender": "여성", "vibe": "따뜻하고 다정한",
             "personality": "차분하고 세심하게 챙겨주는 다정한 비서. 공감을 잘 해주고 늘 응원해준다.",
             "speech": "따뜻한 존댓말. 부드럽고 다정하게 말한다.",
-            "emoji_use": True,
+            "emoji_use": True, "atype": "image", "seed": "Byeol",
         },
-        "🤖 똑부러진 비서": {
-            "name": "제로", "emoji": "🤖", "gender": "중성", "vibe": "깔끔하고 똑부러진",
+        "🧑‍💼 똑부러진 비서": {
+            "name": "제로", "emoji": "🧑‍💼", "gender": "중성", "vibe": "깔끔하고 똑부러진",
             "personality": "군더더기 없이 핵심만 짚어주는 유능한 비서. 효율을 중시한다.",
             "speech": "간결한 존댓말. 핵심부터 명확하게 전달한다.",
-            "emoji_use": False,
+            "emoji_use": False, "atype": "image", "seed": "Zero7",
         },
-        "🐱 귀여운 마스코트": {
-            "name": "냥비서", "emoji": "🐱", "gender": "중성", "vibe": "귀엽고 장난스러운",
-            "personality": "애교 많고 장난스럽지만 할 일은 야무지게 챙기는 마스코트.",
-            "speech": "귀여운 반말. 가끔 '~냥' 같은 말끝을 붙이기도 한다.",
-            "emoji_use": True,
+        "🤗 귀여운 친구": {
+            "name": "토리", "emoji": "🤗", "gender": "중성", "vibe": "귀엽고 장난스러운",
+            "personality": "애교 많고 장난스럽지만 할 일은 야무지게 챙기는 친구.",
+            "speech": "귀여운 반말. 응원과 리액션이 풍부하다.",
+            "emoji_use": True, "atype": "image", "seed": "Tori",
         },
     }
     pcols = st.columns(len(PRESETS))
     for i, (pname, pdata) in enumerate(PRESETS.items()):
         if pcols[i].button(pname, use_container_width=True, key=f"preset_{i}"):
-            st.session_state.char_preview = pdata
+            _apply_preset(pdata)
             st.rerun()
 
     st.divider()
 
-    # ── 직접 설정
-    with st.form("character_form"):
-        c1, c2 = st.columns([3, 1])
-        name = c1.text_input("이름", value=pv.get("name", ""), placeholder="예: 하루")
-        emoji = c2.text_input("아바타 이모지", value=pv.get("emoji", "😎"), max_chars=4)
+    # ── 캐릭터 그림
+    st.markdown("**🎨 캐릭터 그림**")
+    st.caption("무료 오프라인 일러스트로 생성돼요 (인터넷·API 키 불필요). 성별에 따라 헤어·수염이 달라져요.")
+    st.radio(
+        "아바타 종류", ["image", "emoji"], key="cc_atype", horizontal=True,
+        format_func=lambda x: "🖼️ 일러스트 그림" if x == "image" else "😎 이모지",
+        label_visibility="collapsed",
+    )
+    if st.session_state.cc_atype == "image":
+        ac1, ac2 = st.columns([3, 1])
+        ac1.text_input("그림 시드 (같은 값=같은 얼굴)", key="cc_seed",
+                       placeholder="예: 이름이나 좋아하는 단어")
+        ac2.write("")
+        if ac2.button("🎲 다른 얼굴", use_container_width=True, help="다른 얼굴 뽑기"):
+            st.session_state.cc_seed = uuid.uuid4().hex[:8]
+            st.rerun()
+    else:
+        st.text_input("아바타 이모지", key="cc_emoji", max_chars=4)
 
-        c3, c4 = st.columns(2)
-        gender_opts = ["남성", "여성", "중성"]
-        cur_gender = pv.get("gender", "남성")
-        gender = c3.selectbox(
-            "성별/이미지", gender_opts,
-            index=gender_opts.index(cur_gender) if cur_gender in gender_opts else 0,
-        )
-        vibe = c4.text_input("분위기 키워드", value=pv.get("vibe", ""),
-                             placeholder="예: 시원하고 친근한")
+    st.divider()
 
-        personality = st.text_area("성격", value=pv.get("personality", ""), height=90,
-                                   placeholder="캐릭터의 성격을 자유롭게 적어주세요")
-        speech = st.text_area("말투", value=pv.get("speech", ""), height=70,
-                              placeholder="예: 친근한 반말, 응원을 자주 해줌")
-        emoji_use = st.toggle("답변에 이모지 사용", value=pv.get("emoji_use", True))
-
-        saved = st.form_submit_button("💾 캐릭터 저장", use_container_width=True, type="primary")
-        if saved:
-            if not name.strip():
-                st.error("이름을 입력해주세요!")
-            else:
-                new_char = {
-                    "name": name.strip(),
-                    "emoji": (emoji.strip() or "😎"),
-                    "gender": gender,
-                    "vibe": vibe.strip(),
-                    "personality": personality.strip(),
-                    "speech": speech.strip(),
-                    "emoji_use": emoji_use,
-                }
-                save_character(new_char)
-                st.session_state.char_preview = new_char
-                st.success(f"‘{new_char['name']}’ 캐릭터가 저장됐어요! 이제 채팅에서 만나보세요 🎉")
-                st.balloons()
+    # ── 이름·성격·말투
+    st.markdown("**📝 이름·성격·말투**")
+    st.text_input("이름", key="cc_name", placeholder="예: 하루")
+    gc1, gc2 = st.columns(2)
+    with gc1:
+        st.selectbox("성별/이미지", ["남성", "여성", "중성"], key="cc_gender")
+    with gc2:
+        st.text_input("분위기 키워드", key="cc_vibe", placeholder="예: 시원하고 친근한")
+    st.text_area("성격", key="cc_personality", height=90,
+                 placeholder="캐릭터의 성격을 자유롭게 적어주세요")
+    st.text_area("말투", key="cc_speech", height=70,
+                 placeholder="예: 친근한 반말, 응원을 자주 해줌")
+    st.toggle("답변에 이모지 사용", key="cc_emoji_use")
 
     st.write("")
+    if st.button("💾 캐릭터 저장", use_container_width=True, type="primary"):
+        if not st.session_state.cc_name.strip():
+            st.error("이름을 입력해주세요!")
+        else:
+            new_char = {
+                "name": st.session_state.cc_name.strip(),
+                "emoji": (st.session_state.cc_emoji.strip() or "😎"),
+                "gender": st.session_state.cc_gender,
+                "vibe": st.session_state.cc_vibe.strip(),
+                "personality": st.session_state.cc_personality.strip(),
+                "speech": st.session_state.cc_speech.strip(),
+                "emoji_use": st.session_state.cc_emoji_use,
+                "avatar_type": st.session_state.cc_atype,
+                "avatar_seed": (st.session_state.cc_seed.strip()
+                                or st.session_state.cc_name.strip()),
+            }
+            save_character(new_char)
+            st.success(f"‘{new_char['name']}’ 캐릭터가 저장됐어요! 이제 채팅에서 만나보세요 🎉")
+            st.balloons()
+
     if st.button("↩️ 기본값으로 초기화", use_container_width=True):
         save_character(dict(DEFAULT_CHARACTER))
-        st.session_state.char_preview = dict(DEFAULT_CHARACTER)
+        for kk in list(_defaults.keys()):
+            st.session_state.pop(kk, None)
         st.rerun()
 
 
