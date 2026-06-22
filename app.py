@@ -191,6 +191,54 @@ def save_settings(settings: dict):
         json.dump(settings, f, ensure_ascii=False, indent=2)
 
 
+# ─── 나만의 버츄얼 캐릭터 (AI 비서 페르소나) ───
+DEFAULT_CHARACTER = {
+    "name": "하루",
+    "emoji": "😎",
+    "gender": "남성",
+    "vibe": "시원하고 친근한",
+    "personality": "밝고 긍정적이며 시원시원하게 말하는 친구 같은 비서. "
+                   "가볍게 농담도 하지만 챙길 일은 확실히 챙겨주는 든든한 스타일.",
+    "speech": "친근한 반말을 기본으로, 너무 가볍지 않게. 응원과 격려를 자주 해준다.",
+    "emoji_use": True,
+}
+
+
+def load_character() -> dict:
+    """저장된 캐릭터 설정을 기본값과 병합해 반환."""
+    s = load_settings()
+    char = s.get("character") or {}
+    return {**DEFAULT_CHARACTER, **char}
+
+
+def save_character(char: dict):
+    s = load_settings()
+    s["character"] = char
+    save_settings(s)
+
+
+def character_persona_text(char: dict) -> str:
+    """채팅 system_instruction 앞에 붙일 캐릭터 페르소나 문장 생성."""
+    name = char.get("name") or "비서"
+    lines = [
+        f"너의 이름은 '{name}'이고, 사용자가 직접 만든 버츄얼 캐릭터이자 개인 AI 비서야.",
+        f"이미지: {char.get('gender','')} · {char.get('vibe','')} 느낌.",
+        f"성격: {char.get('personality','')}",
+        f"말투: {char.get('speech','')}",
+    ]
+    if char.get("emoji_use", True):
+        lines.append("답변에 어울리는 이모지를 적절히 섞어 생동감 있게 답해.")
+    lines.append(f"항상 '{name}'라는 캐릭터를 일관되게 유지하고, 한국어로 답해.")
+    return "\n".join(lines)
+
+
+def chat_avatar(role: str, char: dict):
+    """채팅 말풍선에 쓸 아바타(어시스턴트는 캐릭터 이모지)."""
+    if role == "assistant":
+        return char.get("emoji") or "🤖"
+    return None
+
+
 # ─── 채팅 기록 ───
 def load_chat_history() -> list:
     sb = _get_supabase()
@@ -2124,7 +2172,7 @@ with st.sidebar:
     st.caption("개인용 노션 스타일")
     st.write("")
     MENU = {
-        "📌 메인":     ["🏠 홈", "💬 채팅", "🔍 검색"],
+        "📌 메인":     ["🏠 홈", "💬 채팅", "🧑‍🎤 내 캐릭터", "🔍 검색"],
         "📅 일정·할일": ["📅 일정", "🗓️ 캘린더뷰", "✅ 할 일", "📝 메모"],
         "🎯 성장":     ["🔁 습관", "🎯 목표", "⏱️ 포모도로"],
         "🏃 건강":     ["🏃 운동", "🌙 수면", "😊 기분/일기", "💊 복약알림"],
@@ -2571,8 +2619,12 @@ if page == "🏠 홈":
 #  페이지: 채팅 (이미지 첨부 + 대화 기록 영구 저장)
 # ════════════════════════════════════════
 elif page == "💬 채팅":
-    st.title("💬 채팅")
-    st.caption("AI 비서와 대화하세요. 앱을 껐다 켜도 이전 대화를 기억해요. 📎 이미지 첨부도 가능.")
+    chat_char = load_character()
+    st.title(f"{chat_char.get('emoji','💬')} {chat_char.get('name','채팅')}")
+    st.caption(
+        f"{chat_char.get('name','AI')}와 대화하세요. 앱을 껐다 켜도 이전 대화를 기억해요. 📎 이미지 첨부도 가능. "
+        "(캐릭터는 ‘🧑‍🎤 내 캐릭터’에서 바꿀 수 있어요)"
+    )
     st.write("")
 
     # 앱 시작 시 파일에서 채팅 기록 불러오기
@@ -2592,7 +2644,7 @@ elif page == "💬 채팅":
                 unsafe_allow_html=True,
             )
             prev_date_label = label
-        with st.chat_message(msg["role"]):
+        with st.chat_message(msg["role"], avatar=chat_avatar(msg["role"], chat_char)):
             st.markdown(msg.get("display", msg["content"]))
 
     # ── 음성 입력 (항상 표시)
@@ -2667,7 +2719,8 @@ elif page == "💬 채팅":
             st.session_state.upload_key += 1
 
         system_instruction = (
-            f"너는 사용자의 스마트 개인 AI 비서야. 말로 모든 걸 처리해줘.\n"
+            character_persona_text(chat_char) + "\n"
+            "말로 모든 걸 처리해줘.\n"
             f"오늘은 {now.strftime('%Y년 %m월 %d일 (%A)')}, 지금 시각은 {now.strftime('%H:%M')}이야.\n\n"
             f"[오늘 일정]\n{schedules_as_text()}\n\n"
             f"[할 일]\n{todos_as_text()}\n\n"
@@ -2689,7 +2742,7 @@ elif page == "💬 채팅":
         # Gemini에는 최근 CHAT_CONTEXT_LIMIT개만 전달 (토큰 절약)
         context = st.session_state.messages[-CHAT_CONTEXT_LIMIT:]
 
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar=chat_avatar("assistant", chat_char)):
             with st.spinner("생각 중..."):
                 try:
                     answer = ask_gemini(
@@ -2719,6 +2772,116 @@ elif page == "💬 채팅":
                 except Exception as e:
                     st.error(f"예상치 못한 오류: {e}")
                     st.session_state.messages.pop()
+
+
+# ════════════════════════════════════════
+#  페이지: 내 캐릭터 (버츄얼 AI 페르소나)
+# ════════════════════════════════════════
+elif page == "🧑‍🎤 내 캐릭터":
+    st.title("🧑‍🎤 내 캐릭터")
+    st.caption("나만의 버츄얼 AI 캐릭터를 만들어요. 여기서 정한 이름·성격·말투가 채팅 비서에 그대로 적용돼요.")
+    st.write("")
+
+    char = load_character()
+
+    # ── 미리보기 카드
+    pv = st.session_state.get("char_preview", char)
+    st.markdown(
+        f"""
+        <div style="border:1px solid #e0e0e0;border-radius:16px;padding:22px;
+                    text-align:center;background:linear-gradient(135deg,#f7f8fc,#eef2ff);">
+            <div style="font-size:64px;line-height:1;">{pv.get('emoji','😎')}</div>
+            <div style="font-size:1.4rem;font-weight:700;margin-top:8px;">{pv.get('name','이름 없음')}</div>
+            <div style="color:#787774;margin-top:2px;">{pv.get('gender','')} · {pv.get('vibe','')}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.write("")
+
+    # ── 프리셋 (빠른 시작)
+    st.markdown("**⚡ 빠른 프리셋**")
+    PRESETS = {
+        "😎 시원한 남사친": {
+            "name": "하루", "emoji": "😎", "gender": "남성", "vibe": "시원하고 친근한",
+            "personality": "밝고 긍정적이며 시원시원하게 말하는 친구 같은 비서. "
+                           "가볍게 농담도 하지만 챙길 일은 확실히 챙겨주는 든든한 스타일.",
+            "speech": "친근한 반말을 기본으로, 너무 가볍지 않게. 응원과 격려를 자주 해준다.",
+            "emoji_use": True,
+        },
+        "🌸 다정한 여비서": {
+            "name": "별이", "emoji": "🌸", "gender": "여성", "vibe": "따뜻하고 다정한",
+            "personality": "차분하고 세심하게 챙겨주는 다정한 비서. 공감을 잘 해주고 늘 응원해준다.",
+            "speech": "따뜻한 존댓말. 부드럽고 다정하게 말한다.",
+            "emoji_use": True,
+        },
+        "🤖 똑부러진 비서": {
+            "name": "제로", "emoji": "🤖", "gender": "중성", "vibe": "깔끔하고 똑부러진",
+            "personality": "군더더기 없이 핵심만 짚어주는 유능한 비서. 효율을 중시한다.",
+            "speech": "간결한 존댓말. 핵심부터 명확하게 전달한다.",
+            "emoji_use": False,
+        },
+        "🐱 귀여운 마스코트": {
+            "name": "냥비서", "emoji": "🐱", "gender": "중성", "vibe": "귀엽고 장난스러운",
+            "personality": "애교 많고 장난스럽지만 할 일은 야무지게 챙기는 마스코트.",
+            "speech": "귀여운 반말. 가끔 '~냥' 같은 말끝을 붙이기도 한다.",
+            "emoji_use": True,
+        },
+    }
+    pcols = st.columns(len(PRESETS))
+    for i, (pname, pdata) in enumerate(PRESETS.items()):
+        if pcols[i].button(pname, use_container_width=True, key=f"preset_{i}"):
+            st.session_state.char_preview = pdata
+            st.rerun()
+
+    st.divider()
+
+    # ── 직접 설정
+    with st.form("character_form"):
+        c1, c2 = st.columns([3, 1])
+        name = c1.text_input("이름", value=pv.get("name", ""), placeholder="예: 하루")
+        emoji = c2.text_input("아바타 이모지", value=pv.get("emoji", "😎"), max_chars=4)
+
+        c3, c4 = st.columns(2)
+        gender_opts = ["남성", "여성", "중성"]
+        cur_gender = pv.get("gender", "남성")
+        gender = c3.selectbox(
+            "성별/이미지", gender_opts,
+            index=gender_opts.index(cur_gender) if cur_gender in gender_opts else 0,
+        )
+        vibe = c4.text_input("분위기 키워드", value=pv.get("vibe", ""),
+                             placeholder="예: 시원하고 친근한")
+
+        personality = st.text_area("성격", value=pv.get("personality", ""), height=90,
+                                   placeholder="캐릭터의 성격을 자유롭게 적어주세요")
+        speech = st.text_area("말투", value=pv.get("speech", ""), height=70,
+                              placeholder="예: 친근한 반말, 응원을 자주 해줌")
+        emoji_use = st.toggle("답변에 이모지 사용", value=pv.get("emoji_use", True))
+
+        saved = st.form_submit_button("💾 캐릭터 저장", use_container_width=True, type="primary")
+        if saved:
+            if not name.strip():
+                st.error("이름을 입력해주세요!")
+            else:
+                new_char = {
+                    "name": name.strip(),
+                    "emoji": (emoji.strip() or "😎"),
+                    "gender": gender,
+                    "vibe": vibe.strip(),
+                    "personality": personality.strip(),
+                    "speech": speech.strip(),
+                    "emoji_use": emoji_use,
+                }
+                save_character(new_char)
+                st.session_state.char_preview = new_char
+                st.success(f"‘{new_char['name']}’ 캐릭터가 저장됐어요! 이제 채팅에서 만나보세요 🎉")
+                st.balloons()
+
+    st.write("")
+    if st.button("↩️ 기본값으로 초기화", use_container_width=True):
+        save_character(dict(DEFAULT_CHARACTER))
+        st.session_state.char_preview = dict(DEFAULT_CHARACTER)
+        st.rerun()
 
 
 # ════════════════════════════════════════
