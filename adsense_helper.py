@@ -43,6 +43,43 @@ YMYL_MAP: dict[str, list[str]] = {
     "뉴스/정치": ["대통령", "국회", "선거", "정치", "정부 정책"],
 }
 
+# ── 분야별 예상 CPC·RPM 데이터 (한국 기준 추정치)
+CPC_RANKING: list[tuple] = [
+    # (분야, 유리도, 예상 CPC 달러, 예상 RPM 원, 경쟁도)
+    ("보험",           "★★★★★", "$15~50",  "8,000~25,000",  "매우 높음"),
+    ("법률/변호사",    "★★★★★", "$20~80",  "10,000~30,000", "매우 높음"),
+    ("금융/재테크",    "★★★★★", "$10~30",  "5,000~15,000",  "높음"),
+    ("부동산",         "★★★★☆", "$8~25",   "4,000~12,000",  "높음"),
+    ("의료/건강",      "★★★★☆", "$5~20",   "3,000~10,000",  "높음"),
+    ("IT/소프트웨어",  "★★★★☆", "$5~15",   "3,000~10,000",  "보통"),
+    ("자동차",         "★★★☆☆", "$4~12",   "2,500~8,000",   "보통"),
+    ("교육/자격증",    "★★★☆☆", "$3~10",   "2,000~6,000",   "보통"),
+    ("여행",           "★★★☆☆", "$2~8",    "1,500~5,000",   "보통"),
+    ("육아/육아용품",  "★★★☆☆", "$2~6",    "1,000~4,000",   "보통"),
+    ("맛집/음식",      "★★☆☆☆", "$1~4",    "800~3,000",     "낮음"),
+    ("뷰티/패션",      "★★☆☆☆", "$1~5",    "800~3,000",     "낮음"),
+    ("연예/엔터",      "★★☆☆☆", "$0.5~2",  "500~2,000",     "낮음"),
+    ("게임",           "★★☆☆☆", "$0.5~3",  "600~2,500",     "낮음"),
+]
+
+RPM_BY_NICHE: dict[str, tuple[int, int]] = {
+    "보험":          (8000, 25000),
+    "법률/변호사":   (10000, 30000),
+    "금융/재테크":   (5000, 15000),
+    "부동산":        (4000, 12000),
+    "의료/건강":     (3000, 10000),
+    "IT/소프트웨어": (3000, 10000),
+    "자동차":        (2500, 8000),
+    "교육/자격증":   (2000, 6000),
+    "여행":          (1500, 5000),
+    "육아/육아용품": (1000, 4000),
+    "맛집/음식":     (800, 3000),
+    "뷰티/패션":     (800, 3000),
+    "연예/엔터":     (500, 2000),
+    "게임":          (600, 2500),
+    "기타":          (1000, 4000),
+}
+
 
 def detect_ymyl(text: str) -> tuple[bool, str]:
     """텍스트에서 YMYL 카테고리 감지. (is_ymyl, category_name) 반환"""
@@ -866,6 +903,96 @@ def timing_verdict(total: int) -> tuple[str, str, str]:
         return "아직 이릅니다", "🔴", "기본 요건이 충족되지 않았습니다. 게시글 작성과 필수 페이지 완성부터 시작하세요."
 
 
+# ── 메타 디스크립션 일괄 생성
+def gen_meta_descriptions(titles: list[str], niche: str) -> str:
+    numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(titles))
+    return ai_generate(f"""
+아래 블로그 글 제목들에 대해 각각 SEO 최적화 메타 디스크립션을 작성해주세요.
+
+분야: {niche}
+제목 목록:
+{numbered}
+
+각 제목마다 다음 형식으로 출력해주세요:
+
+**[번호]. [제목]**
+→ [메타 디스크립션]
+
+규칙:
+- 길이: 한국어 70~80자 (검색 결과에서 잘리지 않게)
+- 핵심 키워드 자연스럽게 포함
+- "이 글에서는...", "~하는 방법을 알아보세요" 같은 클릭 유도 문구
+- 글의 핵심 가치/혜택 명시
+- 중복 표현 금지, 각각 다른 스타일로 작성
+
+한국어로 작성해주세요.
+""", temperature=0.7)
+
+
+# ── OG 태그 생성 (순수 템플릿)
+def gen_og_tags(title: str, description: str, site_name: str, url: str, image_url: str) -> str:
+    safe = lambda s: s.replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    return f"""<!-- Open Graph / SNS 공유 태그 -->
+<meta property="og:type"        content="article" />
+<meta property="og:title"       content="{safe(title)}" />
+<meta property="og:description" content="{safe(description)}" />
+<meta property="og:site_name"   content="{safe(site_name)}" />
+<meta property="og:url"         content="{safe(url)}" />
+<meta property="og:image"       content="{safe(image_url)}" />
+<meta property="og:locale"      content="ko_KR" />
+
+<!-- Twitter Card -->
+<meta name="twitter:card"        content="summary_large_image" />
+<meta name="twitter:title"       content="{safe(title)}" />
+<meta name="twitter:description" content="{safe(description)}" />
+<meta name="twitter:image"       content="{safe(image_url)}" />"""
+
+
+# ── 수익 예측 계산
+def calc_revenue(monthly_visitors: int, niche_key: str, click_rate: float) -> dict:
+    rpm_low, rpm_high = RPM_BY_NICHE.get(niche_key, (1000, 4000))
+    clicks = int(monthly_visitors * click_rate / 100)
+    rev_low  = int(monthly_visitors / 1000 * rpm_low)
+    rev_high = int(monthly_visitors / 1000 * rpm_high)
+    annual_low  = rev_low * 12
+    annual_high = rev_high * 12
+    return {
+        "monthly_visitors": monthly_visitors,
+        "clicks": clicks,
+        "rev_low": rev_low,
+        "rev_high": rev_high,
+        "annual_low": annual_low,
+        "annual_high": annual_high,
+        "rpm_low": rpm_low,
+        "rpm_high": rpm_high,
+    }
+
+
+# ── 글 일괄 생성 (단순 프롬프트 버전 — 빠른 생성용)
+def gen_article_quick(topic: str, niche: str) -> str:
+    return ai_generate(f"""
+당신은 {niche} 분야 전문 블로거입니다.
+구글 E-E-A-T 기준, 3200자 이상의 고품질 블로그 글을 작성해주세요.
+
+주제: {topic}
+분야: {niche}
+
+반드시 포함:
+- ## 목차 (TOC)
+- H2 소제목 4개 이상
+- H3 소제목 각 H2 아래 2개 이상
+- 경험 기반 문장 ("직접 해보니...", "실제로...")
+- 핵심 요약 bullet 5개
+- CTA (댓글/구독 유도)
+- 해시태그 10개 이상
+- 면책조항 (YMYL 해당 시)
+
+문체: 친근한 구어체, 자연스럽게
+형식: 마크다운만 (HTML 금지)
+분량: 3200자 이상 필수
+""", temperature=0.8)
+
+
 def gen_improvement_plan(report: SiteReport) -> str:
     failed = [c for c in report.checks if not c.passed]
     failed_str = "\n".join(f"- {c.name}: {c.detail}" for c in failed)
@@ -902,24 +1029,23 @@ def main():
     st.title("💰 구글 애드센스 승인 도우미")
     st.caption("사이트 분석 → 체크리스트 → AI 콘텐츠 생성으로 한번에 승인!")
 
-    tab_analyze, tab_dashboard, tab_pages, tab_content, tab_guide = st.tabs(
-        ["🔍 사이트 분석", "📊 승인 준비 대시보드", "📄 필수 페이지 생성", "✍️ 콘텐츠 생성", "📋 승인 가이드"]
-    )
+    tabs = st.tabs([
+        "🔍 사이트 분석",
+        "📊 승인 준비 대시보드",
+        "📄 필수 페이지 생성",
+        "✍️ 콘텐츠 생성",
+        "🔧 SEO 도구",
+        "💹 수익 최적화",
+        "📋 승인 가이드",
+    ])
 
-    with tab_analyze:
-        _tab_analyze()
-
-    with tab_dashboard:
-        _tab_dashboard()
-
-    with tab_pages:
-        _tab_pages()
-
-    with tab_content:
-        _tab_content()
-
-    with tab_guide:
-        _tab_guide()
+    with tabs[0]: _tab_analyze()
+    with tabs[1]: _tab_dashboard()
+    with tabs[2]: _tab_pages()
+    with tabs[3]: _tab_content()
+    with tabs[4]: _tab_seo_tools()
+    with tabs[5]: _tab_monetize()
+    with tabs[6]: _tab_guide()
 
 
 def _tab_dashboard():
@@ -1471,6 +1597,264 @@ def _tab_content():
                 mime="text/html",
                 use_container_width=True,
             )
+
+
+def _tab_seo_tools():
+    st.header("🔧 SEO 도구")
+    st.caption("메타 디스크립션 일괄 생성 · OG 태그 생성 · 글 일괄 생성")
+
+    # ════ 섹션 1: 메타 디스크립션 일괄 생성 ════
+    st.subheader("① 메타 디스크립션 일괄 생성")
+    st.info("글 제목 여러 개를 입력하면 각각 클릭률 높은 설명문을 자동 생성합니다.")
+
+    seo_niche = st.text_input("블로그 분야", placeholder="예: 재테크, IT 리뷰 등", key="seo_niche")
+    seo_titles_raw = st.text_area(
+        "글 제목 목록 (줄바꿈으로 구분, 최대 10개)",
+        placeholder="2026 ETF 투자 완전 정복\n월세 vs 전세 어떤 게 유리할까\n...",
+        height=150,
+        key="seo_titles",
+    )
+
+    if st.button("📝 메타 디스크립션 일괄 생성", type="primary", use_container_width=True):
+        titles = [t.strip() for t in seo_titles_raw.splitlines() if t.strip()][:10]
+        if not titles or not seo_niche:
+            st.warning("분야와 제목을 입력해주세요.")
+        else:
+            with st.spinner(f"{len(titles)}개 메타 디스크립션 생성 중..."):
+                result = gen_meta_descriptions(titles, seo_niche)
+                st.session_state["meta_result"] = result
+
+    if "meta_result" in st.session_state:
+        st.markdown(st.session_state["meta_result"])
+        st.download_button(
+            "📥 메타 디스크립션 다운로드 (.md)",
+            data=st.session_state["meta_result"],
+            file_name="meta_descriptions.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+
+    st.divider()
+
+    # ════ 섹션 2: OG 태그 생성기 ════
+    st.subheader("② OG 태그 생성기 (SNS 공유 최적화)")
+    st.info("SNS 공유 시 썸네일·제목·설명이 제대로 뜨도록 OG 태그를 생성합니다.")
+
+    og_col1, og_col2 = st.columns(2)
+    with og_col1:
+        og_title    = st.text_input("페이지 제목", placeholder="2026 ETF 투자 완전 정복", key="og_title")
+        og_site     = st.text_input("사이트명", placeholder="스마트 재테크 블로그", key="og_site")
+        og_url      = st.text_input("페이지 URL", placeholder="https://yourblog.com/etf-2026", key="og_url")
+    with og_col2:
+        og_desc     = st.text_area("설명 (70~80자)", placeholder="ETF 투자 처음이라면? 2026년 추천 ETF TOP 7을 수익률·안전성 기준으로 비교합니다.", height=100, key="og_desc")
+        og_image    = st.text_input("대표 이미지 URL", placeholder="https://yourblog.com/images/etf.jpg", key="og_img")
+
+    if st.button("🏷️ OG 태그 생성", use_container_width=True):
+        if not og_title:
+            st.warning("최소한 제목을 입력해주세요.")
+        else:
+            tags = gen_og_tags(og_title, og_desc, og_site, og_url, og_image)
+            st.session_state["og_result"] = tags
+
+    if "og_result" in st.session_state:
+        st.markdown("**생성된 OG 태그** — `<head>` 안에 붙여넣으세요")
+        st.code(st.session_state["og_result"], language="html")
+        st.download_button(
+            "📥 OG 태그 다운로드",
+            data=st.session_state["og_result"],
+            file_name="og_tags.html",
+            mime="text/html",
+            use_container_width=True,
+        )
+
+    st.divider()
+
+    # ════ 섹션 3: 글 일괄 생성 ════
+    st.subheader("③ 글 일괄 생성 (최대 5개)")
+    st.info("주제 여러 개를 한 번에 입력하면 순서대로 자동 생성합니다.")
+
+    bulk_niche = st.text_input("블로그 분야", placeholder="예: 재테크", key="bulk_niche")
+    bulk_topics_raw = st.text_area(
+        "생성할 글 주제 (줄바꿈으로 구분, 최대 5개)",
+        placeholder="2026 ETF 투자 완전 정복\n월세 vs 전세 어느 쪽이 유리할까\n직장인 절세 방법 5가지",
+        height=130,
+        key="bulk_topics",
+    )
+
+    if st.button("🚀 일괄 글 생성 시작", type="primary", use_container_width=True, key="btn_bulk"):
+        topics = [t.strip() for t in bulk_topics_raw.splitlines() if t.strip()][:5]
+        if not topics or not bulk_niche:
+            st.warning("분야와 주제를 입력해주세요.")
+        else:
+            bulk_results = {}
+            progress = st.progress(0, text="준비 중...")
+            for idx, topic in enumerate(topics):
+                progress.progress((idx) / len(topics), text=f"[{idx+1}/{len(topics)}] '{topic}' 생성 중...")
+                article = gen_article_quick(topic, bulk_niche)
+                bulk_results[topic] = article
+            progress.progress(1.0, text=f"완료! {len(topics)}개 생성됨")
+            st.session_state["bulk_results"] = bulk_results
+            st.success(f"✅ {len(topics)}개 글 생성 완료!")
+
+    if "bulk_results" in st.session_state:
+        results = st.session_state["bulk_results"]
+        art_tabs = st.tabs([f"📄 {t[:20]}..." if len(t) > 20 else f"📄 {t}" for t in results])
+        for tab, (topic, article) in zip(art_tabs, results.items()):
+            with tab:
+                char_total = len(article)
+                st.caption(f"글자 수: {char_total:,}자  {'✅ 3200자 충족' if char_total >= 3200 else '⚠️ 3200자 미달'}")
+                preview, raw = st.tabs(["미리보기", "원본"])
+                with preview:
+                    st.markdown(article)
+                with raw:
+                    st.code(article, language="markdown")
+                st.download_button(
+                    f"📥 '{topic[:15]}' 다운로드",
+                    data=article,
+                    file_name=f"{topic[:30].replace(' ','_')}.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                    key=f"dl_bulk_{topic[:20]}",
+                )
+
+        all_text = "\n\n---\n\n".join(
+            f"# {t}\n\n{a}" for t, a in results.items()
+        )
+        st.download_button(
+            "📥 전체 글 한번에 다운로드 (.md)",
+            data=all_text,
+            file_name="bulk_articles.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+
+
+def _tab_monetize():
+    st.header("💹 수익 최적화")
+    st.caption("광고 배치 전략 · 예상 수익 계산 · 고CPC 분야 랭킹")
+
+    # ════ 섹션 1: 고CPC 분야 랭킹 ════
+    st.subheader("① 분야별 CPC·수익성 랭킹")
+    st.info("광고 단가(CPC)가 높은 분야를 선택할수록 같은 방문자 수로 더 많이 법니다.")
+
+    import pandas as pd
+    df = pd.DataFrame(
+        CPC_RANKING,
+        columns=["분야", "수익성", "예상 CPC (USD)", "예상 RPM (원)", "경쟁도"],
+    )
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.caption("※ CPC/RPM은 계절·키워드·광고 품질에 따라 크게 달라질 수 있습니다.")
+
+    st.divider()
+
+    # ════ 섹션 2: 수익 예측 계산기 ════
+    st.subheader("② 예상 월수익 계산기")
+
+    rev_col1, rev_col2, rev_col3 = st.columns(3)
+    with rev_col1:
+        rev_visitors = st.number_input("월 방문자 수", min_value=100, max_value=10_000_000, value=5000, step=100, key="rev_vis")
+    with rev_col2:
+        niche_options = [r[0] for r in CPC_RANKING] + ["기타"]
+        rev_niche = st.selectbox("블로그 분야", niche_options, key="rev_niche")
+    with rev_col3:
+        rev_ctr = st.slider("광고 클릭률 (%)", min_value=0.5, max_value=5.0, value=2.0, step=0.5, key="rev_ctr")
+
+    if st.button("💰 예상 수익 계산", type="primary", use_container_width=True):
+        r = calc_revenue(rev_visitors, rev_niche, rev_ctr)
+        st.session_state["rev_result"] = r
+
+    if "rev_result" in st.session_state:
+        r = st.session_state["rev_result"]
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("월 방문자", f"{r['monthly_visitors']:,}명")
+        c2.metric("월 클릭 수", f"{r['clicks']:,}회")
+        c3.metric("예상 월수익", f"{r['rev_low']:,}~{r['rev_high']:,}원")
+        c4.metric("예상 연수익", f"{r['annual_low']//10000}~{r['annual_high']//10000}만원")
+
+        st.markdown(f"""
+        <div style="background:#f0fff4;border:1px solid #2ecc71;border-radius:10px;padding:16px;margin:12px 0">
+          <b>📊 수익 시뮬레이션</b><br>
+          월 방문자 <b>{r['monthly_visitors']:,}명</b> × RPM <b>{r['rpm_low']:,}~{r['rpm_high']:,}원</b> 기준<br>
+          예상 월수익: <b style="color:#27ae60">{r['rev_low']:,}원 ~ {r['rev_high']:,}원</b><br>
+          예상 연수익: <b style="color:#27ae60">{r['annual_low']//10000}만원 ~ {r['annual_high']//10000}만원</b>
+        </div>
+        """, unsafe_allow_html=True)
+
+        target_visitors = {
+            "월 30만원": max(1, int(300000 / (r['rpm_high'] / 1000))),
+            "월 100만원": max(1, int(1000000 / (r['rpm_high'] / 1000))),
+            "월 300만원": max(1, int(3000000 / (r['rpm_high'] / 1000))),
+        }
+        st.markdown("**수익 목표별 필요 방문자 (최적 조건 기준)**")
+        tc = st.columns(3)
+        for i, (goal, vis) in enumerate(target_visitors.items()):
+            tc[i].metric(goal, f"{vis:,}명/월")
+
+    st.divider()
+
+    # ════ 섹션 3: 광고 배치 전략 가이드 ════
+    st.subheader("③ 광고 배치 전략 가이드")
+
+    st.markdown("""
+### 📍 수익 최대화 광고 위치 TOP 5
+
+| 순위 | 위치 | 클릭률 | 설명 |
+|------|------|--------|------|
+| 1위 | **글 제목 바로 아래** | ⭐⭐⭐⭐⭐ | 독자가 처음 스크롤할 때 가장 먼저 보는 위치 |
+| 2위 | **본문 중간 (H2 2번째 이후)** | ⭐⭐⭐⭐⭐ | 독자가 글에 집중한 상태 — 클릭 가능성 최고 |
+| 3위 | **글 끝 (CTA 바로 위)** | ⭐⭐⭐⭐ | 글을 다 읽은 독자 → 다음 행동 유도 |
+| 4위 | **사이드바** (PC 전용) | ⭐⭐⭐ | 모바일에서는 효과 거의 없음 |
+| 5위 | **글 목록 페이지 중간** | ⭐⭐⭐ | 여러 글 훑어보는 독자에게 노출 |
+
+---
+
+### 📱 모바일 vs PC 전략
+
+| 기기 | 추천 광고 형태 | 금지 사항 |
+|------|----------------|-----------|
+| **모바일** | 반응형(Responsive) · 320×50 앵커 광고 | 전체 화면 팝업, 콘텐츠 가리는 광고 |
+| **PC** | 336×280 큰 직사각형 · 사이드바 160×600 | 과도한 광고 (페이지당 3개 이하 권장) |
+
+---
+
+### 🚫 절대 하면 안 되는 것
+
+- **"광고를 클릭해주세요"** 문구 → 즉시 계정 정지
+- **광고와 콘텐츠 혼동** → 광고 위에 "추천 링크" 문구 금지
+- **자동 새로고침** 페이지에 광고 배치
+- **팝업 뒤** 광고 숨기기
+- **성인 콘텐츠** 페이지에 광고 삽입
+- **페이지당 광고 과다** (3~4개 이하 권장)
+
+---
+
+### 💡 클릭률 높이는 실전 팁
+
+1. **광고 색상을 사이트 테마와 통일** — 자연스럽게 녹아들수록 CTR↑
+2. **텍스트 광고보다 이미지+텍스트 혼합형** 선택
+3. **본문 1000~1500자 지점에 광고 삽입** — 독자 몰입 최고점
+4. **첫 화면(Above the fold)에 광고 1개** — 스크롤 전 노출 확보
+5. **A/B 테스트** — 같은 글에 위치 바꿔가며 클릭률 비교
+""")
+
+    if st.button("🤖 AI 맞춤 광고 배치 전략 생성", use_container_width=True, key="btn_ad_strategy"):
+        sel_niche = st.session_state.get("rev_niche", "")
+        sel_vis   = st.session_state.get("rev_vis", 5000)
+        with st.spinner("맞춤 광고 전략 생성 중..."):
+            strategy = ai_generate(f"""
+'{sel_niche}' 분야 블로그 (월 방문자 약 {sel_vis:,}명)에 최적화된
+구글 애드센스 광고 배치 전략을 구체적으로 작성해주세요.
+
+포함 내용:
+1. 이 분야 독자 특성 분석 (체류 시간, 관심사)
+2. 추천 광고 위치 Top 3 (이유 포함)
+3. 추천 광고 형태 (반응형/배너/인피드 등)
+4. CTR 높이는 테마·색상 설정 팁
+5. 수익 극대화를 위한 월별 최적화 계획
+
+한국어로, 실용적이고 구체적으로 작성해주세요.
+""")
+            st.markdown(strategy)
 
 
 def _tab_guide():
