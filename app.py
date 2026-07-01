@@ -2133,6 +2133,7 @@ with st.sidebar:
         "🤖 AI 도구":  ["💡 AI제안", "🤖 AI분석", "🌐 번역", "🔗 URL요약", "📰 뉴스"],
         "📊 통계":     ["📊 리포트", "📈 차트"],
         "🔗 연동":     ["🔗 구글 캘린더"],
+        "🌐 SNS":      ["🤝 이웃관리"],
     }
 
     for category, pages in MENU.items():
@@ -2442,6 +2443,8 @@ if page == "🏠 홈":
                 if w["temp_max"] is not None else ""
             )
             precip = f'☔ {w["precip_today"]}mm' if w["precip_today"] > 0 else ""
+            _precip_html = f'  <span class="weather-detail-item">{precip}</span>' if precip else ""
+            _minmax_html = f'<div class="weather-minmax">{minmax}</div>' if minmax else ""
             st.markdown(
                 f'<div class="weather-card">'
                 f'<div class="weather-location">📍 {WEATHER_LOCATION}</div>'
@@ -2454,9 +2457,9 @@ if page == "🏠 홈":
                 f'<div class="weather-details">'
                 f'  <span class="weather-detail-item">💧 {w["humidity"]}%</span>'
                 f'  <span class="weather-detail-item">💨 {w["wind"]}m/s</span>'
-                f'  {"<span class=\"weather-detail-item\">" + precip + "</span>" if precip else ""}'
+                f'{_precip_html}'
                 f'</div>'
-                f'{"<div class=\"weather-minmax\">" + minmax + "</div>" if minmax else ""}'
+                f'{_minmax_html}'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -3421,10 +3424,10 @@ elif page == "🎯 목표":
                         f'<div style="display:flex;justify-content:space-between;align-items:center">'
                         f'<b>{g["title"]}</b>{auto_badge}'
                         f'<span style="font-size:0.82rem;color:#787774">{d_txt} · ~{g["deadline"]}</span></div>'
-                        f'{"<div style=\"font-size:0.85rem;color:#787774;margin-top:4px\">" + g["description"] + "</div>" if g.get("description") else ""}'
-                        f'<div class="progress-bar-bg"><div class="progress-bar-fill" style="width:{pct}%;background:{bar_color}"></div></div>'
-                        f'<div style="font-size:0.85rem;color:{bar_color};font-weight:600">{status_txt}</div>'
-                        f'</div>',
+                        + (f'<div style="font-size:0.85rem;color:#787774;margin-top:4px">{g["description"]}</div>' if g.get("description") else "")
+                        + f'<div class="progress-bar-bg"><div class="progress-bar-fill" style="width:{pct}%;background:{bar_color}"></div></div>'
+                        + f'<div style="font-size:0.85rem;color:{bar_color};font-weight:600">{status_txt}</div>'
+                        + f'</div>',
                         unsafe_allow_html=True,
                     )
                 with c2:
@@ -3805,10 +3808,10 @@ elif page == "📚 독서":
                     f'<div class="book-card">'
                     f'<span class="book-status-badge {status_badge[status_key]}">{status_label}</span><br>'
                     f'<b>{b["title"]}</b>'
-                    f'{"  <span style=\"color:#787774;font-size:0.85rem\">· " + b["author"] + "</span>" if b.get("author") else ""}'
-                    f'{"  " + stars if stars else ""}'
-                    f'{"<div style=\"font-size:0.8rem;color:#787774\">" + fin + "</div>" if fin else ""}'
-                    f'</div>',
+                    + (f'  <span style="color:#787774;font-size:0.85rem">· {b["author"]}</span>' if b.get("author") else "")
+                    + (f'  {stars}' if stars else "")
+                    + (f'<div style="font-size:0.8rem;color:#787774">{fin}</div>' if fin else "")
+                    + f'</div>',
                     unsafe_allow_html=True,
                 )
             with c2:
@@ -4581,3 +4584,356 @@ elif page == "💡 AI제안":
         if st.button("🔄 다시 제안받기"):
             del st.session_state.ai_suggestion
             st.rerun()
+
+
+# ════════════════════════════════════════
+#  페이지: 🤝 이웃관리
+# ════════════════════════════════════════
+elif page == "🤝 이웃관리":
+    from naver_blog_manager import NaverBlogManager
+    import pandas as pd
+
+    @st.cache_resource
+    def _get_naver_mgr():
+        return NaverBlogManager(DATA_DIR)
+
+    mgr = _get_naver_mgr()
+
+    st.title("🤝 네이버 블로그 이웃관리")
+    st.caption("이웃 현황 분석 · 비맞팔 정리 · 이웃 추가 자동화")
+
+    # ─── 세션 상태 초기화 ───────────────────
+    for _k, _v in {
+        "nb_blog_id":       None,
+        "nb_analysis":      None,
+        "nb_selected_rm":   [],
+        "nb_search_result": [],
+    }.items():
+        if _k not in st.session_state:
+            st.session_state[_k] = _v
+
+    tab_login, tab_dashboard, tab_cleanup, tab_add, tab_log = st.tabs(
+        ["🔑 로그인", "📊 현황", "🧹 정리", "➕ 추가", "📋 로그"]
+    )
+
+    # ══════════ 로그인 탭 ══════════
+    with tab_login:
+        st.subheader("네이버 계정 연결")
+
+        logged_in = mgr.is_logged_in()
+        if logged_in:
+            bid = st.session_state.nb_blog_id or mgr.get_my_blog_id()
+            st.session_state.nb_blog_id = bid
+            st.success(f"✅ 로그인 중 — 블로그 ID: **{bid or '(확인 중)'}**")
+            if st.button("🔓 로그아웃", type="secondary"):
+                mgr.logout()
+                st.session_state.nb_blog_id = None
+                st.session_state.nb_analysis = None
+                st.rerun()
+        else:
+            st.info("네이버 아이디와 비밀번호를 입력하면 세션이 저장됩니다.\n재실행 시 자동 로그인됩니다.")
+            col1, col2 = st.columns(2)
+            with col1:
+                nid = st.text_input("네이버 아이디", key="nb_nid")
+            with col2:
+                npw = st.text_input("비밀번호", type="password", key="nb_npw")
+
+            if st.button("🔑 로그인", type="primary", use_container_width=True):
+                if not nid or not npw:
+                    st.warning("아이디와 비밀번호를 입력해주세요.")
+                else:
+                    with st.spinner("로그인 중... (약 10~20초 소요)"):
+                        ok, msg = mgr.login(nid, npw)
+                    if ok:
+                        st.success(msg)
+                        with st.spinner("블로그 ID 확인 중..."):
+                            bid = mgr.get_my_blog_id()
+                        st.session_state.nb_blog_id = bid
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
+
+        st.divider()
+        st.caption("⚠️ 비밀번호는 로컬 세션 파일에 저장되지 않습니다. 브라우저 세션 쿠키만 저장됩니다.")
+
+    # ══════════ 현황 탭 ══════════
+    with tab_dashboard:
+        st.subheader("이웃 현황 분석")
+
+        if not mgr.is_logged_in():
+            st.warning("먼저 로그인 탭에서 로그인해주세요.")
+        else:
+            bid = st.session_state.nb_blog_id or mgr.get_my_blog_id()
+            st.session_state.nb_blog_id = bid
+
+            cache = mgr.load_cache()
+            if cache:
+                cache_time = cache.get("timestamp", "")[:19].replace("T", " ")
+                st.info(f"마지막 분석: {cache_time}  |  블로그: {cache.get('blog_id', '')}")
+                if st.session_state.nb_analysis is None:
+                    st.session_state.nb_analysis = cache
+
+            col_refresh, col_hint = st.columns([1, 3])
+            with col_refresh:
+                do_analyze = st.button("🔄 이웃 분석 실행", type="primary", use_container_width=True)
+
+            if do_analyze:
+                status_box = st.empty()
+                def _prog(msg):
+                    if isinstance(msg, str):
+                        status_box.info(f"⏳ {msg}")
+                    else:
+                        status_box.info(f"⏳ {msg}명 수집 중...")
+
+                with st.spinner("이웃 목록 수집 중 (수가 많으면 수 분 소요)..."):
+                    result = mgr.analyze_mutual(bid, progress_cb=_prog)
+                status_box.empty()
+                st.session_state.nb_analysis = result
+                st.success("분석 완료!")
+                st.rerun()
+
+            ana = st.session_state.nb_analysis
+            if ana:
+                stats = ana["stats"]
+                c1, c2, c3, c4, c5 = st.columns(5)
+                for col, num, label, color in [
+                    (c1, stats["following_count"],  "팔로잉",     "#2383e2"),
+                    (c2, stats["follower_count"],   "팔로워",     "#10b981"),
+                    (c3, stats["mutual_count"],     "서로이웃",   "#8b5cf6"),
+                    (c4, stats["non_mutual_count"], "비맞팔 대상", "#ef4444"),
+                    (c5, stats["fan_count"],        "나만 팔로워", "#f59e0b"),
+                ]:
+                    with col:
+                        st.markdown(
+                            f'<div class="stat-card">'
+                            f'<div class="stat-num" style="color:{color}">{num}</div>'
+                            f'<div class="stat-label">{label}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+
+                st.write("")
+                st.caption("🔴 비맞팔 = 내가 팔로우하지만 상대가 나를 팔로우하지 않음")
+                st.caption("🟡 나만 팔로워 = 상대가 나를 팔로우하지만 내가 팔로우하지 않음 (맞팔 가능)")
+
+    # ══════════ 정리 탭 ══════════
+    with tab_cleanup:
+        st.subheader("🧹 비맞팔 이웃 정리")
+
+        if not mgr.is_logged_in():
+            st.warning("먼저 로그인 탭에서 로그인해주세요.")
+        elif st.session_state.nb_analysis is None:
+            st.info("현황 탭에서 '이웃 분석 실행'을 먼저 해주세요.")
+        else:
+            non_mutual = st.session_state.nb_analysis.get("non_mutual", [])
+            fans       = st.session_state.nb_analysis.get("fans", [])
+
+            st.markdown(f"**비맞팔 이웃: {len(non_mutual)}명**")
+
+            if not non_mutual:
+                st.success("🎉 모두 서로이웃 상태입니다!")
+            else:
+                # 나를 팔로우하는 팬도 맞팔 제안
+                if fans:
+                    st.info(f"💡 나를 팔로우하는 {len(fans)}명에게 맞팔하면 서로이웃이 됩니다. (추가 탭 확인)")
+
+                # 테이블
+                df_nm = pd.DataFrame([
+                    {
+                        "블로그 ID": i.get("blogId", i.get("blogid", "")),
+                        "닉네임":    i.get("nickName", i.get("blogNickName", "")),
+                        "블로그명":  i.get("blogName", ""),
+                    }
+                    for i in non_mutual
+                ])
+
+                st.write("")
+                col_sel, col_all, col_none = st.columns([3, 1, 1])
+                with col_all:
+                    if st.button("전체 선택", use_container_width=True):
+                        st.session_state.nb_selected_rm = df_nm["블로그 ID"].tolist()
+                        st.rerun()
+                with col_none:
+                    if st.button("선택 해제", use_container_width=True):
+                        st.session_state.nb_selected_rm = []
+                        st.rerun()
+
+                selected = st.multiselect(
+                    "삭제할 이웃 선택 (복수 선택 가능)",
+                    options=df_nm["블로그 ID"].tolist(),
+                    default=st.session_state.nb_selected_rm,
+                    format_func=lambda bid: f"{bid}  ({df_nm[df_nm['블로그 ID']==bid]['닉네임'].values[0] if not df_nm[df_nm['블로그 ID']==bid].empty else ''})",
+                    key="nb_rm_select",
+                )
+                st.session_state.nb_selected_rm = selected
+
+                st.write("")
+                st.dataframe(df_nm, use_container_width=True, hide_index=True)
+
+                st.divider()
+                c_dry, c_delay, c_exec = st.columns([1, 1, 2])
+                with c_dry:
+                    dry_run = st.checkbox("건식 실행 (삭제 안 함)", value=True, key="nb_dry")
+                with c_delay:
+                    delay = st.number_input("요청 간격(초)", min_value=2.0, max_value=30.0, value=4.0, step=1.0)
+
+                with c_exec:
+                    btn_label = f"{'[건식] ' if dry_run else ''}선택한 {len(selected)}명 이웃 삭제"
+                    if st.button(btn_label, type="primary", use_container_width=True, disabled=not selected):
+                        if not selected:
+                            st.warning("삭제할 이웃을 선택해주세요.")
+                        else:
+                            progress_bar = st.progress(0)
+                            status_txt   = st.empty()
+
+                            def _rm_prog(idx, total, bid):
+                                progress_bar.progress(idx / total)
+                                status_txt.text(f"({idx}/{total}) {bid} 처리 중...")
+
+                            with st.spinner("삭제 중..."):
+                                res = mgr.batch_remove(
+                                    selected,
+                                    delay_sec=delay,
+                                    progress_cb=_rm_prog,
+                                    dry_run=dry_run,
+                                )
+                            progress_bar.empty()
+                            status_txt.empty()
+
+                            st.success(f"완료 — 성공: {len(res['success'])}명  |  실패: {len(res['failed'])}명")
+                            if res["failed"]:
+                                st.json(res["failed"])
+
+                            # 캐시 무효화
+                            if not dry_run:
+                                st.session_state.nb_analysis = None
+                                st.info("현황 탭에서 다시 분석을 실행하면 최신 정보를 확인할 수 있습니다.")
+
+    # ══════════ 추가 탭 ══════════
+    with tab_add:
+        st.subheader("➕ 이웃 추가")
+
+        if not mgr.is_logged_in():
+            st.warning("먼저 로그인 탭에서 로그인해주세요.")
+        else:
+            # ── 직접 추가 ──
+            st.markdown("#### 블로그 ID 직접 입력")
+            col_id, col_mut, col_btn = st.columns([2, 1, 1])
+            with col_id:
+                direct_id = st.text_input("블로그 ID (예: naver_user123)", key="nb_direct_id")
+            with col_mut:
+                is_mutual = st.checkbox("서로이웃 신청", key="nb_is_mutual")
+            with col_btn:
+                st.write("")  # vertical align
+                if st.button("➕ 추가", key="nb_add_direct", use_container_width=True):
+                    if not direct_id.strip():
+                        st.warning("블로그 ID를 입력해주세요.")
+                    else:
+                        with st.spinner(f"{direct_id} 이웃 추가 중..."):
+                            ok, msg = mgr.add_neighbor(direct_id.strip(), is_mutual=is_mutual)
+                        if ok:
+                            st.success(f"✅ {msg}")
+                        else:
+                            st.error(f"❌ {msg}")
+
+            st.divider()
+
+            # ── 나를 팔로우하는 팬에게 맞팔 ──
+            if st.session_state.nb_analysis:
+                fans = st.session_state.nb_analysis.get("fans", [])
+                if fans:
+                    st.markdown(f"#### 나를 팔로우하는 {len(fans)}명 (맞팔 미완료)")
+                    df_fans = pd.DataFrame([
+                        {
+                            "블로그 ID": i.get("blogId", ""),
+                            "닉네임":    i.get("nickName", ""),
+                        }
+                        for i in fans
+                    ])
+                    st.dataframe(df_fans, use_container_width=True, hide_index=True)
+
+                    fan_sel = st.multiselect(
+                        "맞팔할 블로그 선택",
+                        options=df_fans["블로그 ID"].tolist(),
+                        key="nb_fan_sel",
+                    )
+                    if st.button(f"선택한 {len(fan_sel)}명 맞팔 추가", disabled=not fan_sel):
+                        prog = st.progress(0)
+                        for i, bid in enumerate(fan_sel):
+                            prog.progress((i + 1) / len(fan_sel))
+                            ok, msg = mgr.add_neighbor(bid, is_mutual=True)
+                            if ok:
+                                st.write(f"✅ {bid}")
+                            else:
+                                st.write(f"❌ {bid} — {msg}")
+                            time_module.sleep(3 + random.uniform(0.5, 2.0))
+                        prog.empty()
+                        st.success("맞팔 완료!")
+
+            st.divider()
+
+            # ── 키워드 검색 ──
+            st.markdown("#### 키워드로 블로그 검색 후 추가")
+            col_kw, col_max, col_sch = st.columns([3, 1, 1])
+            with col_kw:
+                keyword = st.text_input("검색 키워드 (예: 일상, 요리, 여행)", key="nb_keyword")
+            with col_max:
+                max_res = st.number_input("최대 결과", 5, 50, 20, 5)
+            with col_sch:
+                st.write("")
+                if st.button("🔍 검색", key="nb_search", use_container_width=True):
+                    if not keyword.strip():
+                        st.warning("키워드를 입력해주세요.")
+                    else:
+                        with st.spinner(f"'{keyword}' 검색 중..."):
+                            found = mgr.search_blogs(keyword.strip(), max_results=int(max_res))
+                        st.session_state.nb_search_result = found
+
+            if st.session_state.nb_search_result:
+                results = st.session_state.nb_search_result
+                st.markdown(f"**검색 결과: {len(results)}개**")
+                df_res = pd.DataFrame(results)
+                st.dataframe(df_res, use_container_width=True, hide_index=True)
+
+                add_sel = st.multiselect(
+                    "이웃 추가할 블로그 선택",
+                    options=[r["blogId"] for r in results],
+                    format_func=lambda bid: f"{bid}  ({next((r['nickName'] for r in results if r['blogId']==bid), '')})",
+                    key="nb_add_search_sel",
+                )
+                col_mtype, col_add = st.columns([1, 2])
+                with col_mtype:
+                    add_mut = st.checkbox("서로이웃으로 신청", key="nb_add_mut")
+                with col_add:
+                    if st.button(f"선택한 {len(add_sel)}명 이웃 추가", type="primary", disabled=not add_sel):
+                        prog = st.progress(0)
+                        succ, fail = 0, 0
+                        for i, bid in enumerate(add_sel):
+                            prog.progress((i + 1) / len(add_sel))
+                            ok, msg = mgr.add_neighbor(bid, is_mutual=add_mut)
+                            if ok:
+                                succ += 1
+                            else:
+                                fail += 1
+                                st.write(f"❌ {bid}: {msg}")
+                            time_module.sleep(3 + random.uniform(0.5, 2.0))
+                        prog.empty()
+                        st.success(f"완료 — 성공 {succ}명  |  실패 {fail}명")
+
+    # ══════════ 로그 탭 ══════════
+    with tab_log:
+        st.subheader("📋 작업 로그")
+        logs = mgr.get_logs(100)
+        if not logs:
+            st.info("아직 기록된 작업이 없습니다.")
+        else:
+            df_log = pd.DataFrame([
+                {
+                    "시각":    l.get("ts", ""),
+                    "작업":    "✅ 추가" if l["action"] == "add" else "🗑 삭제",
+                    "블로그 ID": l.get("blog_id", ""),
+                    "결과":    "성공" if l.get("success") else "실패",
+                    "오류":    l.get("error", ""),
+                }
+                for l in logs
+            ])
+            st.dataframe(df_log, use_container_width=True, hide_index=True)
