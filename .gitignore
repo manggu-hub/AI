@@ -4,4 +4,4 @@ data/
 token.json
 __pycache__/
 *.pyc
-.streamlit/
+.streamlit/secrets.toml
