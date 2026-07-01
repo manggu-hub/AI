@@ -19,6 +19,7 @@ import google.generativeai as genai
 
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
+UNSPLASH_KEY = os.getenv("UNSPLASH_ACCESS_KEY", "")
 
 # ── AdSense 정책 기준값
 MIN_WORD_COUNT = 300          # 페이지당 최소 단어 수
@@ -378,6 +379,48 @@ def _build_checks(r: SiteReport) -> list[CheckItem]:
         )
 
     return checks
+
+
+# ════════════════════════════════════════
+#  Unsplash 이미지 검색
+# ════════════════════════════════════════
+def search_unsplash(keyword: str, count: int = 3) -> list[dict]:
+    """키워드로 Unsplash 이미지 검색 → [{url, thumb, alt, photographer, link}] 반환"""
+    if not UNSPLASH_KEY:
+        return []
+    try:
+        import json
+        query = urllib.parse.quote(keyword)
+        api_url = f"https://api.unsplash.com/search/photos?query={query}&per_page={count}&orientation=landscape"
+        req = urllib.request.Request(api_url, headers={"Authorization": f"Client-ID {UNSPLASH_KEY}"})
+        ctx = ssl.create_default_context()
+        with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+            data = json.loads(resp.read())
+        results = []
+        for item in data.get("results", []):
+            results.append({
+                "url": item["urls"]["regular"],
+                "thumb": item["urls"]["small"],
+                "alt": item.get("alt_description") or keyword,
+                "photographer": item["user"]["name"],
+                "link": item["links"]["html"],
+            })
+        return results
+    except Exception:
+        return []
+
+
+def extract_image_keywords(article: str) -> list[str]:
+    """글에서 📷 이미지 가이드 텍스트 추출 → 검색 키워드 리스트 반환"""
+    keywords = []
+    for line in article.split("\n"):
+        if "📷" in line and ("이미지" in line or "IMAGE" in line.upper()):
+            # 대괄호 안 텍스트 또는 ** 사이 텍스트 제거 후 순수 설명만 추출
+            clean = re.sub(r"\*\*\[.*?\]\*\*", "", line)
+            clean = re.sub(r"📷|>|\*\*|\[|\]", "", clean).strip()
+            if clean:
+                keywords.append(clean[:50])
+    return keywords[:6]  # 최대 6개
 
 
 # ════════════════════════════════════════
@@ -1572,11 +1615,34 @@ def _tab_content():
             status = "✅ 충족" if char_total >= 3200 else "⚠️ 부족"
             st.metric("3,200자 기준", status)
 
-        tab_preview, tab_raw = st.tabs(["📖 미리보기", "📝 마크다운 원본"])
+        tab_preview, tab_raw, tab_images = st.tabs(["📖 미리보기", "📝 마크다운 원본", "🖼️ 이미지 검색"])
         with tab_preview:
             st.markdown(article)
         with tab_raw:
             st.code(article, language="markdown")
+        with tab_images:
+            if not UNSPLASH_KEY:
+                st.warning("Unsplash 이미지 검색을 사용하려면 Streamlit Secrets에 `UNSPLASH_ACCESS_KEY`를 추가하세요.")
+                st.code('UNSPLASH_ACCESS_KEY = "여기에_Unsplash_Access_Key"', language="toml")
+                st.markdown("🔗 무료 키 발급: https://unsplash.com/developers → 앱 등록 → Access Key 복사")
+            else:
+                st.info("글에서 이미지 가이드를 추출해 Unsplash에서 자동 검색합니다.")
+                img_keywords = extract_image_keywords(article)
+                if not img_keywords:
+                    st.warning("이미지 가이드를 찾지 못했습니다. 글 생성 후 다시 시도하세요.")
+                else:
+                    for kw in img_keywords:
+                        st.markdown(f"#### 📷 `{kw}`")
+                        imgs = search_unsplash(kw, count=3)
+                        if imgs:
+                            cols = st.columns(3)
+                            for i, img in enumerate(imgs):
+                                with cols[i]:
+                                    st.image(img["thumb"], caption=f"📸 {img['photographer']}", use_container_width=True)
+                                    st.markdown(f"[원본 보기]({img['link']})", unsafe_allow_html=False)
+                        else:
+                            st.caption("검색 결과 없음")
+                        st.divider()
 
         safe_title = st.session_state.get("ct_title", "article")
         col_dl1, col_dl2 = st.columns(2)
